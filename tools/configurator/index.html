@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UltraBeep Configurator</title>
+<link rel="stylesheet" href="style.css">
+<script src="js/ini.js"></script>
+<script src="js/crc32.js"></script>
+<script src="js/ble.js"></script>
+<script src="js/voicepack.js"></script>
+<script src="js/schema.js"></script>
+<script src="js/tones.js"></script>
+<script src="js/qoa.js"></script>
+<script src="js/fatimage.js"></script>
+<script src="js/app.js"></script>
+<script src="js/voice.js"></script>
+<script src="js/voicegen.js"></script>
+</head>
+<body>
+<header>
+  <h1><span class="brand">UltraBeep</span><span class="product">Configurator</span></h1>
+  <span id="source" class="muted">nothing loaded</span>
+  <span id="dirty" class="dirty"></span>
+  <span class="spacer"></span>
+  <label class="auto" title="Basic: the everyday settings. Expert: adds the fine tuning, e.g. the takeoff thresholds. Developer: everything, including the sampling rates, the raw log, Status and tests and the config files as text.">View <select id="mode"><option value="basic">Basic</option><option value="expert">Expert</option><option value="dev">Developer</option></select></label>
+  <button id="open-folder">Open SD card folder</button>
+  <button id="new-config" title="The defaults with three example profiles, to try the configurator without a device: every view is shown. Saving downloads the files.">New config</button>
+  <button id="ble">Connect via Bluetooth</button>
+  <label class="auto" title="Connects by itself when a device you connected once before is switched on and in range"><input id="auto-ble" type="checkbox"> Auto-connect</label>
+  <button id="save" class="primary" disabled>Save</button>
+  <a class="toollink" href="https://vario.breezedude.de/analyze/" target="_blank" rel="noopener" title="Raw sensor logs and IGC files: replay, filters, sensor health, 3D map">Analyzer</a>
+</header>
+<div id="message"></div>
+
+<section id="welcome" class="welcome">
+  <h2>Load the configuration</h2>
+  <ul>
+    <li><b>Open SD card folder</b> - connect the switched-off device over USB, choose the top folder of the
+      SD card drive. Changes are saved straight to the card (Chrome or Edge).</li>
+    <li><b>Connect via Bluetooth</b> - device switched on, UltraBeep firmware (Chrome or Edge).</li>
+    <li><b>New config</b> - no device at hand: the defaults with three example profiles and every view of the
+      configurator (the ones that need a device say so). Saving downloads <code>config.ultrabip</code> (top folder
+      of the SD card) and <code>config_ext.ultrabip</code> (folder <code>ultrabeep</code>).</li>
+  </ul>
+  <p class="muted">Profiles 1-3 stay in <code>config.ultrabip</code> (also editable with BipLink); profiles 4-10 and
+    the new settings go into <code>ultrabeep/config_ext.ultrabip</code> (a folder, because the stock firmware
+    deletes unknown files in the top folder). Lines this page does not know are kept.</p>
+  <p class="muted"><b>View</b> (header): <b>Basic</b> shows the everyday settings, <b>Expert</b> adds the fine tuning
+    such as the takeoff thresholds, <b>Developer</b> everything - sampling rates, the raw log, Status and tests and the
+    config files as text.</p>
+</section>
+
+<div id="editor" class="editor" hidden>
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+</body>
+</html>

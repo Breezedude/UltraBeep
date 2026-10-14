@@ -1,0 +1,17 @@
+{
+  "name": "ultrabip-tts-relay",
+  "version": "1.0.0",
+  "description": "Text-to-speech relay (Microsoft Edge voices) for the UltraBeep configurator",
+  "type": "module",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "msedge-tts": "^2.1.0"
+  }
+}

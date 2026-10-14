@@ -1,0 +1,6 @@
+{
+  "name": "ultrabip-analyzer",
+  "private": true,
+  "description": "Raw log analyzer of UltraBeep: browser UI (index.html) and command line (cli.mjs) on the same modules",
+  "type": "module"
+}

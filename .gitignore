@@ -1,0 +1,32 @@
+# The vendor SDK (tools/fetch_sdk.sh fetches it)
+/third_party/
+
+# Personal device configuration (contains names); examples live in tools/configurator/examples/
+*.ultrabip
+!tools/configurator/examples/*.ultrabip
+
+# Build output and local tool settings
+build/
+CMakeUserPresets.json
+*.update
+*.install
+__pycache__/
+.vscode/
+.idea/
+.claude/
+.impeccable/
+
+# Flight recordings and raw sensor logs (personal data: names, positions)
+*.igc
+*.IGC
+*.kml
+RAW*.BIN
+*.BIN
+
+# Secret IGC signing key (tools/make_signing_key.py)
+/firmware/keys/
+
+# Private analyzer algorithms (tools/analyzer/README.md) and the relay's local files
+/tools/analyzer/private/
+/tools/tts-relay/node_modules/
+/tools/tts-relay/.env

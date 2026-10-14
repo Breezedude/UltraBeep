@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <script>
+    /* Served as a folder (e.g. /analyze): without the trailing slash the relative paths below
+       would point one level up, so add it before anything loads. */
+    if (location.protocol.startsWith("http") && !/\/$|\.html?$/.test(location.pathname)) {
+      location.replace(location.pathname + "/" + location.search + location.hash);
+    }
+  </script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UltraBeep Log Analyzer</title>
+  <link rel="stylesheet" href="vendor/fonts/fonts.css">
+  <link rel="stylesheet" href="vendor/uplot/uPlot.min.css">
+  <link rel="stylesheet" href="css/analyzer.css">
+  <script src="vendor/uplot/uPlot.iife.min.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">UltraBeep <span>Log Analyzer</span></div>
+    <button id="open" class="primary" title="Open a raw log (0:/raw/RAWnnnnn.BIN) or an IGC file; drag and drop works too">Open log</button>
+    <input id="file" type="file" accept=".bin,.BIN,.igc,.IGC" hidden>
+    <div class="fileinfo" id="fileinfo">No log loaded</div>
+    <div class="transport">
+      <button id="play" disabled title="Play the vario tone from the cursor (space)">▶ Play</button>
+      <span class="clock mono" id="clock">–</span>
+      <label class="muted" for="speed">Speed</label>
+      <select id="speed">
+        <option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option>
+        <option value="4">4×</option><option value="8">8×</option>
+      </select>
+      <label class="muted" for="tonesrc">Tone</label>
+      <select id="tonesrc" title="Climb rate that drives the tone; keys 1–9 switch while playing"></select>
+      <select id="wave" title="Waveform"><option value="square">square</option><option value="sine">sine</option></select>
+      <input id="volume" type="range" min="0" max="1" step="0.05" value="0.4" title="Volume">
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="side" id="side">
+      <section>
+        <h2>Runs</h2>
+        <div id="runs" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div class="add-run" style="margin-top:8px">
+          <select id="addalgo" aria-label="Algorithm to add"></select>
+          <button id="addrun">Add run</button>
+        </div>
+      </section>
+      <section>
+        <h2>Reference</h2>
+        <div class="setting">
+          <label for="refhalf">Least-squares window ±</label>
+          <span class="mono" id="refhalfval">2.0 s</span>
+          <input id="refhalf" type="range" min="0.5" max="6" step="0.5" value="2" style="grid-column:1/-1">
+        </div>
+        <p class="muted" style="margin:6px 0 0">Non-causal slope of the barometric altitude: no lag, the yardstick for lag and noise.</p>
+      </section>
+      <section>
+        <h2>Tone curve</h2>
+        <details>
+          <summary class="muted">Default: stock "custom" curve. Paste a configurator JSON…</summary>
+          <textarea id="curvejson" spellcheck="false" placeholder='{"format": "ultrabip-tones/1", ...}'></textarea>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button id="curveapply">Apply</button><button id="curvereset">Default</button>
+            <span class="muted" id="curvemsg"></span>
+          </div>
+        </details>
+      </section>
+    </aside>
+
+    <section class="charts" id="charts">
+      <div class="empty" id="empty">
+        <div>
+          <p><b>Open a raw log</b> (0:/raw/RAWnnnnn.BIN) <b>or an IGC file</b> (any flight; the enhanced ones of UltraBeep too) or drop it here.</p>
+          <p>Flight states (thermaling, straight flight, spirals, wingovers) are derived with the firmware's detectors and shown as bands and on the map, with what the device would announce.</p>
+          <p>Everything runs in the browser; nothing is uploaded.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="right" id="right">
+      <div class="resizer" id="resizer" title="Drag to resize"></div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-pane="map" aria-selected="true">3D map</button>
+        <button role="tab" data-pane="flight">Flight</button>
+        <button role="tab" data-pane="metrics">Metrics</button>
+        <button role="tab" data-pane="health">Sensor health</button>
+        <button role="tab" data-pane="spectrum">Spectrum</button>
+        <button role="tab" data-pane="events">Events</button>
+        <button role="tab" data-pane="api">Automation</button>
+      </nav>
+      <div class="pane active" id="pane-map">
+        <div id="map" title="Left drag: rotate around the position · right drag: move the map · wheel: zoom · click on the track: set the cursor"><div class="attrib">Imagery © Esri, Maxar, Earthstar Geographics · Terrain: Mapzen / AWS Terrain Tiles</div></div>
+        <div class="map-tools">
+          <label class="muted" for="mapcolor">Colour</label>
+          <select id="mapcolor"></select>
+          <canvas class="legend-bar" id="legend" width="160" height="8"></canvas>
+          <span class="mono muted" id="legendtext">−3 … +3 m/s</span>
+          <label class="muted"><input type="checkbox" id="terrain" checked> terrain</label>
+          <label class="muted" for="glidersize" title="Size of the glider at the replay position, times its true size (about 9 m span)">glider</label>
+          <input id="glidersize" type="range" min="1" max="50" step="1" aria-label="Glider size">
+          <span class="mono muted" id="glidersizeval"></span>
+          <label class="muted" title="The camera follows the replay position: behind the pilot along the heading, holding its bearing while circling. Left drag rotates around the position, right drag moves the map, the wheel zooms."><input type="checkbox" id="follow" checked> follow</label>
+          <button id="mapfit">Fit</button>
+        </div>
+      </div>
+      <div class="pane" id="pane-flight"></div>
+      <div class="pane" id="pane-metrics"></div>
+      <div class="pane" id="pane-health"></div>
+      <div class="pane" id="pane-spectrum"></div>
+      <div class="pane" id="pane-events"></div>
+      <div class="pane" id="pane-api"></div>
+    </section>
+  </main>
+
+  <div id="drop">Drop the raw log or IGC file</div>
+  <div class="busy" id="busy">Working…</div>
+  <script type="module" src="js/ui/app.js"></script>
+</body>
+</html>
