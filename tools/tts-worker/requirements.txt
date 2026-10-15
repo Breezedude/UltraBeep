@@ -1,0 +1,32 @@
+# The worker's venv (Python 3.13, CPU only), as tested on 2026-10-15. install.sh installs torch from
+# the PyTorch CPU index first, then this file, then Chatterbox itself (git clone, pinned commit,
+# `pip install --no-deps -e`, since its pyproject pins gradio and numpy for its demos).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+torchaudio==2.6.0+cpu
+
+# Chatterbox's dependencies (its pyproject.toml)
+numpy==2.5.4
+librosa==0.11.0
+s3tokenizer==0.3.0
+transformers==5.2.0
+diffusers==0.29.0
+resemble-perth @ git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993
+conformer==0.3.2
+safetensors==0.5.3
+spacy_pkuseg==1.0.1
+pykakasi==2.3.0
+pyloudnorm==0.2.0
+omegaconf==2.4.0
+huggingface_hub==1.33.0
+
+# The worker
+soundfile==0.14.0
+av==19.0.1
+websockets==17.2
+num2words==0.5.14
+
+# The lab (Gradio; tools/tts-worker/lab.py)
+gradio==6.8.0
+fastapi==0.143.1
+uvicorn==0.54.0

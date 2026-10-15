@@ -106,6 +106,8 @@ function renderVoice() {
   const sampleBtn = el("button", { class: "primary", type: "button", disabled: !canGenerate }, "Create a sample");
   const samplePlay = el("button", { type: "button", disabled: true }, "▶ Play the sample");
   const sampleStop = el("button", { type: "button" }, "Stop");
+  /* a home-server clip still in the making: the status says so while fetchTts asks again */
+  const waiting = (target, what) => (s) => { target.textContent = `${what}: the home server is still at it, asking again in ${s} s …`; };
   sampleBtn.addEventListener("click", async () => {
     if (!picker.voiceSel.value) { setMessage("Choose a voice first.", true); return; }
     sampleBtn.disabled = true;
@@ -115,7 +117,7 @@ function renderVoice() {
       for (let i = 0; i < names.length; i++) {
         status.textContent = `Sample: ${i + 1} of ${names.length} (${names[i]}) …`;
         const clip = voicepackClips(catalogLang).find((c) => c.name === names[i]);
-        G.set(names[i], await generateClip(clip.text, settings, 1, 5));
+        G.set(names[i], await generateClip(clip.text, settings, 1, 5, { onWait: waiting(status, `Sample ${i + 1} of ${names.length}`) }));
         sample.push(names[i]);
       }
       status.textContent = `Sample: ${names.length} clips as the device plays them - "${names.map((n) => voicepackText(catalogLang, n)).join(" · ")}". ` +
@@ -130,6 +132,100 @@ function renderVoice() {
   });
   samplePlay.addEventListener("click", () => playClips(sampleBytes(sample)));
   sampleStop.addEventListener("click", stopPlaying);
+
+  /* ---- the own voice: recorded or opened here, cloned on the home server ---- */
+  const readLang = canGenerate ? catalogLang : "en";
+  const readAloud = ["reset_hold", "reset_wait", "voice_update", "press_button_to_confirm", "bluetooth_pair"]
+    .map((n) => voicepackText(readLang, n)).filter(Boolean).join(". ");
+  const ownStatus = el("p", { class: "sub voice-status" }, "");
+  const consent = el("input", { type: "checkbox", id: `own-consent-${Date.now()}` });
+  const ownRecord = el("button", { type: "button" }, "● Record");
+  const ownFile = el("input", { type: "file", accept: "audio/*", hidden: true });
+  const ownOpen = el("button", { type: "button" }, "Open a recording …");
+  const ownDelete = el("button", { type: "button" }, "Delete my voice");
+  const ownState = () => {
+    const id = ownVoiceId(settings);
+    ownDelete.hidden = !id;
+    if (!ownStatus.textContent) {
+      ownStatus.textContent = id ? "Your voice is on the home server: \"Own voice\" in the voice list." : "";
+    }
+  };
+  const sendOwn = async (encoded) => {
+    if (!consent.checked) { ownStatus.textContent = "Tick the box first: only your own voice, or one you may use."; return; }
+    ownRecord.disabled = ownOpen.disabled = true;
+    try {
+      ownStatus.textContent = "Converting …";
+      const wav = await recordingToWav(encoded);
+      if (wav.seconds < 6) throw new Error(`The recording has ${wav.seconds.toFixed(1)} s of sound; 10 to 15 s are needed.`);
+      ownStatus.textContent = `Sending ${wav.seconds.toFixed(0)} s; the home server makes the voice from it (a few seconds) …`;
+      const made = await createOwnVoice(wav.bytes);
+      const old = ownVoiceId(settings);
+      settings.own = made.id;
+      settings.voice = ownVoiceName(picker.langSel.value, made.id);
+      saveTtsSettings(settings);
+      if (old && old !== made.id) deleteOwnVoice(old).catch(() => { /* gone already */ });
+      picker.refill();
+      ownStatus.textContent = `Your voice is ready (${made.seconds} s of speech used) and selected: "Own voice". Create a sample to hear it; ` +
+        "\"Save audio generator settings\" keeps it in the configuration.";
+      packInfo();
+    } catch (e) {
+      ownStatus.textContent = e.name === "EncodingError" ? "The browser cannot read this file as audio." : e.message;
+    }
+    ownRecord.disabled = ownOpen.disabled = false;
+    ownState();
+  };
+  let recording = null;
+  ownRecord.addEventListener("click", async () => {
+    if (recording) { recording.stop(); return; }
+    if (!consent.checked) { ownStatus.textContent = "Tick the box first: only your own voice, or one you may use."; return; }
+    try {
+      recording = await startRecording(OWN_MAX_S);
+    } catch (e) {
+      ownStatus.textContent = `No microphone: ${e.message}`;
+      return;
+    }
+    const t0 = Date.now();
+    const tick = setInterval(() => { ownRecord.textContent = `■ Stop (${Math.round((Date.now() - t0) / 1000)} s)`; }, 250);
+    ownStatus.textContent = `Recording: read the text above, then stop (after ${OWN_MAX_S} s it stops by itself).`;
+    recording.done.then((encoded) => { /* stopped by the button or the time limit */
+      clearInterval(tick);
+      ownRecord.textContent = "● Record";
+      recording = null;
+      sendOwn(encoded);
+    });
+  });
+  ownOpen.addEventListener("click", () => ownFile.click());
+  ownFile.addEventListener("change", async () => {
+    const f = ownFile.files[0];
+    ownFile.value = "";
+    if (f) sendOwn(await f.arrayBuffer());
+  });
+  ownDelete.addEventListener("click", async () => {
+    const id = ownVoiceId(settings);
+    if (!id || !window.confirm("Delete your voice on the home server? Clips you made with it stay where they are.")) return;
+    try {
+      const was = await deleteOwnVoice(id);
+      settings.own = "";
+      if (OWN_VOICE_RE.test(settings.voice || "")) settings.voice = "";
+      saveTtsSettings(settings);
+      picker.refill();
+      ownStatus.textContent = was ? "Your voice is deleted on the home server." : "The home server did not have it anymore.";
+    } catch (e) {
+      ownStatus.textContent = e.message;
+    }
+    ownState();
+  });
+  const ownRow = customRow("Own voice", el("div", { class: "own-voice" },
+    el("p", { class: "sub" }, `Your own voice for the clips: read this aloud, calmly and in a quiet room, for 10 to 15 s - "${readAloud}."`),
+    el("label", { class: "consent", for: consent.id }, consent, " This is my own voice, or the speaker has allowed me to use it."),
+    el("div", { class: "buttons" }, ownRecord, ownOpen, ownFile, ownDelete), ownStatus),
+  "Recording or file are converted to WAV in this browser and sent to the voice service; a server at the maintainer's " +
+    "home derives the voice's features from it and keeps only those, not the recording, under a random ID that only " +
+    "this browser - and your configuration, once you save the generator settings - knows. It stays until you delete it " +
+    "here. Clips made with it carry an inaudible watermark that marks them as synthetic.");
+  ownRow.hidden = true;
+  picker.ready.then(() => { ownRow.hidden = !picker.own().available; ownState(); packInfo(); });
+  picker.voiceSel.addEventListener("change", () => packInfo());
 
   /* ---- the clip to generate ---- */
   /* the name is never typed: the catalogue (✎) or a profile's voice line sets it, so every clip made here is one
@@ -178,7 +274,7 @@ function renderVoice() {
     edGen.disabled = true;
     edStatus.textContent = "Asking the voice service …";
     try {
-      const c = await generateClip(text, settings);
+      const c = await generateClip(text, settings, 1, CLIP_MAX_S, { onWait: waiting(edStatus, "Generating") });
       G.set(name, c);
       edStatus.textContent = `Generated: ${c.seconds.toFixed(2)} s, ${(c.bytes.length / 1024).toFixed(1)} kB.`;
       playClip(c.bytes);
@@ -239,8 +335,12 @@ function renderVoice() {
     const all = voicepackClips(catalogLang).length;
     const have = countGenerated();
     const ext = voicepackClips(catalogLang).filter((c) => c.stock === false);
+    const v = picker.current();
+    const slow = v && (v.provider === "chatterbox" || v.provider === "own") && have < all;
     packStatus.textContent = `${have} of ${all} clips of the ${textsName} pack generated in this session ` +
-      `(${ext.filter((c) => G.has(c.name)).length} of the ${ext.length} extension clips the original pack lacks).`;
+      `(${ext.filter((c) => G.has(c.name)).length} of the ${ext.length} extension clips the original pack lacks).` +
+      (slow ? ` A home-server voice takes about ${v.seconds} s per clip it has not made before - up to ` +
+        `${Math.max(1, Math.round(((all - have) * v.seconds) / 60))} min for the rest; clips it has made already come at once.` : "");
     buildBtn.textContent = have === all ? `Build ${pack.id}.ubpack` : `Build ${pack.id}.ubpack (${all - have} missing)`;
   };
   /* Generates a list of clips, two at a time: the whole pack, or the extension clips from the catalogue. */
@@ -261,7 +361,8 @@ function renderVoice() {
       while (clips.length && !genCancel) {
         const clip = clips.shift();
         try {
-          G.set(clip.name, await generateClip(clip.text, settings, 1, 5)); /* pack clips may be longer than Bluetooth ones */
+          /* pack clips may be longer than Bluetooth ones; on the home server they wait behind single clips */
+          G.set(clip.name, await generateClip(clip.text, settings, 1, 5, { bulk: true }));
         } catch (e) {
           if (e.status === 429) { genCancel = true; failed.push("Rate limit of the service reached: raise RATE_LIMIT in the relay's .env for a whole pack."); }
           else if (e.status !== 400 && !retried.has(clip.name)) { retried.add(clip.name); clips.push(clip); continue; }
@@ -329,7 +430,11 @@ function renderVoice() {
       "to the device are exactly what you heard. \"Create a sample\" speaks a few typical lines as single clips, as the " +
       "device strings them together." },
   customRow("Voice pack", packSel, packField.help), packNote,
-  customRow("Language", picker.langSel, "The voices of the pack's language and English."), customRow("Voice", picker.voiceSel),
+  customRow("Language", picker.langSel, "The voices of the pack's language and English."),
+  customRow("Voice", picker.voiceSel, "Microsoft Edge's voices answer at once. The home server's (Chatterbox) sound more " +
+    "natural but take a few seconds per clip it has not made before - it makes the pack clips of its voices in advance - " +
+    "and are missing from the list while that server is offline."),
+  ownRow,
   customRow("Pitch", slider("pitch", -50, 50, "%"), "Higher or lower, in percent; large shifts sound artificial."),
   customRow("Rate", slider("rate", -50, 50, "%"), "Faster or slower speech, the pitch unchanged."),
   customRow("Band-pass", el("div", { class: "band" }, bandBox, lo, el("span", { class: "unit" }, "Hz to"), hi,

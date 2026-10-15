@@ -140,6 +140,7 @@ IGC files get a G record only if the build finds a secret key in `firmware/keys/
 | `tools/configurator/` | Web configurator, a static page without a build step |
 | `tools/analyzer/` | Raw log and IGC analyzer, browser and command line |
 | `tools/tts-relay/` | Small Node.js relay for the configurator's text-to-speech |
+| `tools/tts-worker/` | Chatterbox voices from a computer at home, offered through the relay; own voices cloned from a recording |
 | `tools/` | `mkupdate.py` (update image), `fetch_sdk.sh`, `vbv_igc.py` (decode and verify IGC files), `make_signing_key.py` |
 | `docs/` | IGC data records, configuration extension, raw log format, the configurator's Bluetooth file service |
 
@@ -153,7 +154,9 @@ library) is fetched by `tools/fetch_sdk.sh` and keeps its own licences. Two conf
 in `firmware/config/` come from ST's and ChaN's templates and keep their notices. The analyzer
 ships uPlot and deck.gl (MIT) and the IBM Plex fonts (SIL Open Font License) in
 `tools/analyzer/vendor/`, each with its licence. Only the 3D map loads data from outside: satellite
-images from Esri and terrain tiles from AWS.
+images from Esri and terrain tiles from AWS. The TTS worker installs Chatterbox and its model weights
+(Resemble AI, MIT) and its Python dependencies under their own licences; none of them is in this
+repository.
 
 ## Disclaimer
 

@@ -1,0 +1,28 @@
+[Unit]
+Description=UltraBeep TTS worker (Chatterbox, connects out to the voice relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=tts
+Group=tts
+WorkingDirectory=/opt/tts/worker
+EnvironmentFile=/etc/tts/worker.env
+Environment=HOME=/var/lib/tts
+Environment=HF_HUB_OFFLINE=1
+Environment=TQDM_DISABLE=1
+Environment=NUMBA_CACHE_DIR=/var/lib/tts/cache/numba
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/tts/venv/bin/python /opt/tts/worker/worker.py
+Restart=always
+RestartSec=10
+StateDirectory=tts
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/tts
+
+[Install]
+WantedBy=multi-user.target

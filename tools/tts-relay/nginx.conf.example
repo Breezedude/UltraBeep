@@ -24,6 +24,29 @@ server {
         proxy_read_timeout 30s;
         proxy_buffering off;
     }
+
+    # The TTS worker at home: a WebSocket that stays open (the relay pings every 30 s).
+    location = /v1/worker {
+        proxy_pass http://127.0.0.1:5055;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    # Recordings for own voices: up to 20 s of 16-bit WAV (about 1 MB).
+    location = /v1/voices/own {
+        client_max_body_size 2m;
+        proxy_pass http://127.0.0.1:5055;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
 }
 
 server {

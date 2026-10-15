@@ -260,6 +260,10 @@ button.play.danger:hover { color: var(--error); border-color: var(--error); }
 .band input[type=number] { width: 90px; }
 .band select { width: auto; }
 .pack { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--border); }
+.own-voice { display: flex; flex-direction: column; min-width: 0; }
+.own-voice .sub { margin: 0 0 6px; }
+.own-voice .consent { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; }
+.own-voice .consent input { margin-top: 3px; }
 
 /* voice line (custom profile name) */
 .voice .row { border-top: 0; padding: 6px 0; }

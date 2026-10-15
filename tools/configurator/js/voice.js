@@ -6,9 +6,16 @@
  * (js/qoa.js). Used by the Voice view (js/voicegen.js: single clips, the profiles' voice lines,
  * whole packs). Language, voice, pitch, rate and the band-pass stay in this browser (localStorage)
  * and, once saved there, in the configuration on the device.
+ *
+ * The relay has Microsoft Edge's voices and those of a server at home (Chatterbox, provider
+ * "chatterbox", names "cb:<locale>-<voice>"): better, but seconds per clip unless made before, and
+ * gone while that server is offline. There, one's own voice can be cloned from a recording: it
+ * becomes "cb:<locale>-own-<id>", a voice no list shows, known only to this browser (and to the
+ * configuration once the generator settings are saved there).
  */
 
-const TTS_URL = "https://voice.breezedude.de";
+/* localStorage "cfg.ttsUrl" points a browser at a relay under test (e.g. http://localhost:5055) */
+const TTS_URL = (() => { try { return localStorage.getItem("cfg.ttsUrl"); } catch (e) { return null; } })() || "https://voice.breezedude.de";
 const TTS_STORAGE = "cfg.tts";
 const CLIP_RATE = 22050;
 const CLIP_TARGET_RMS_DB = -13; /* loudest 200 ms of the stock clips: -13 dBFS rms, peaks about -2 dBFS */
@@ -25,7 +32,10 @@ let voiceCatalog = null; /* promise of the relay's voice list, fetched once per 
 const VOICE_CLIP_KEY = "identity_voiceclip_string";
 const VOICE_CLIP_MAX = 24;
 
-const TTS_DEFAULTS = { locale: "", voice: "", pitch: 0, rate: 0, bandpass: true, lo: 300, hi: 8000 };
+const TTS_DEFAULTS = { locale: "", voice: "", pitch: 0, rate: 0, bandpass: true, lo: 300, hi: 8000, own: "" };
+const TTS_RETRIES = 20; /* a home-server clip still in the making: asked again after the relay's Retry-After */
+const OWN_VOICE_RE = /^cb:([a-z]{2,3}-[A-Z]{2})-own-([a-z2-7]{26})$/;
+const OWN_MAX_S = 20;   /* of a recording sent for an own voice; the server uses up to 15 s of speech */
 
 function ttsSettings() {
   try { return { ...TTS_DEFAULTS, ...JSON.parse(localStorage.getItem(TTS_STORAGE) || "{}") }; } catch (e) { return { ...TTS_DEFAULTS }; }
@@ -75,32 +85,119 @@ async function fetchService(url, init) {
   }
 }
 
-/* The MP3 of `text` in `voice`; pitch and rate in percent (the relay's prosody). */
-async function fetchTts(voice, text, opts = {}) {
-  const res = await fetchService(`${TTS_URL}/v1/audio/speech`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "tts-1", input: text, voice, response_format: "mp3",
-      pitch: Math.round(opts.pitch || 0), rate: Math.round(opts.rate || 0) }),
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { msg = (await res.json()).error.message; } catch (e) { /* no JSON body */ }
-    const err = new Error(`Voice service: ${msg}`);
-    err.status = res.status;
-    throw err;
-  }
-  return res.arrayBuffer();
+async function serviceError(res) {
+  let msg = `HTTP ${res.status}`;
+  try { msg = (await res.json()).error.message; } catch (e) { /* no JSON body */ }
+  const err = new Error(`Voice service: ${msg}`);
+  err.status = res.status;
+  return err;
 }
 
-/* All voices of the relay, once per page: [{name, locale, gender, friendly}]. */
-function fetchVoices() {
+/*
+ * The MP3 of `text` in `voice`; pitch and rate in percent (the relay's prosody, Edge voices only).
+ * opts.bulk: a clip of a whole pack (the home server makes single clips first); opts.onWait(seconds)
+ * is told when a home-server clip takes longer and is asked for again.
+ */
+async function fetchTts(voice, text, opts = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetchService(`${TTS_URL}/v1/audio/speech`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "tts-1", input: text, voice, response_format: "mp3",
+        pitch: Math.round(opts.pitch || 0), rate: Math.round(opts.rate || 0), priority: opts.bulk ? "bulk" : undefined }),
+    });
+    if (res.ok) return res.arrayBuffer();
+    const wait = parseInt(res.headers.get("Retry-After"), 10);
+    if (res.status === 503 && wait > 0 && attempt < TTS_RETRIES) {
+      if (opts.onWait) opts.onWait(wait);
+      await new Promise((r) => setTimeout(r, Math.min(wait, 60) * 1000));
+      continue;
+    }
+    throw await serviceError(res);
+  }
+}
+
+/* The relay's voices, once per page: {voices: [{name, locale, gender, friendly, provider, seconds}],
+ * own: {available, languages, seconds}} (an older relay sends no provider and no own). */
+function fetchVoiceCatalog() {
   if (!voiceCatalog) {
     voiceCatalog = fetchService(`${TTS_URL}/v1/voices`, {}).then(async (res) => {
       if (!res.ok) throw new Error(`Voice service: HTTP ${res.status}`);
-      return (await res.json()).voices;
+      const body = await res.json();
+      return { voices: body.voices, own: body.own || { available: false, languages: [] } };
     }).catch((e) => { voiceCatalog = null; throw e; });
   }
   return voiceCatalog;
+}
+
+/* ---- the own voice (cloned on the home server) ---- */
+
+const homeVoice = (name) => (name || "").startsWith("cb:");
+const ownVoiceName = (locale, id) => `cb:${locale}-own-${id}`;
+/* the Chatterbox language of a locale ("nb-NO" speaks "no") */
+const ttsLanguage = (locale) => { const l = (locale || "").split("-")[0].toLowerCase(); return l === "nb" || l === "nn" ? "no" : l; };
+
+/* The id of this browser's own voice: remembered, or taken from a voice saved in the configuration. */
+function ownVoiceId(settings) {
+  const m = OWN_VOICE_RE.exec(settings.voice || "");
+  return settings.own || (m ? m[2] : "");
+}
+
+/* A recording (any format the browser decodes) as 16-bit mono WAV at 24 kHz, trimmed and at most
+ * OWN_MAX_S long: the only format the relay accepts. Returns {bytes, seconds}. */
+async function recordingToWav(encoded) {
+  const rate = 24000;
+  const decoded = await new OfflineAudioContext(1, 1, rate).decodeAudioData(encoded.slice(0));
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * rate)), rate);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const x = (await off.startRendering()).getChannelData(0);
+  const thr = Math.pow(10, -40 / 20);
+  let a = 0, b = x.length;
+  while (a < b && Math.abs(x[a]) < thr) a++;
+  while (b > a && Math.abs(x[b - 1]) < thr) b--;
+  const pcm = x.subarray(a, Math.min(b, a + OWN_MAX_S * rate));
+  const out = new DataView(new ArrayBuffer(44 + 2 * pcm.length));
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); out.setUint32(4, 36 + 2 * pcm.length, true); str(8, "WAVE"); str(12, "fmt ");
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true); out.setUint32(24, rate, true);
+  out.setUint32(28, 2 * rate, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); str(36, "data");
+  out.setUint32(40, 2 * pcm.length, true);
+  for (let i = 0; i < pcm.length; i++) out.setInt16(44 + 2 * i, Math.max(-32768, Math.min(32767, Math.round(pcm[i] * 32767))), true);
+  return { bytes: new Uint8Array(out.buffer), seconds: pcm.length / rate };
+}
+
+/* Sends a recording to make an own voice (the caller has the speaker's consent): {id, seconds}. */
+async function createOwnVoice(wavBytes) {
+  const res = await fetchService(`${TTS_URL}/v1/voices/own?consent=yes`, {
+    method: "POST", headers: { "Content-Type": "audio/wav" }, body: wavBytes });
+  if (!res.ok) throw await serviceError(res);
+  return res.json();
+}
+
+/* Deletes an own voice on the server; true when it was there. */
+async function deleteOwnVoice(id) {
+  const res = await fetchService(`${TTS_URL}/v1/voices/own/${id}`, { method: "DELETE" });
+  if (res.status === 404) return false;
+  if (!res.ok) throw await serviceError(res);
+  return true;
+}
+
+/* Records from the microphone until stop() (or maxS): resolves stop() to the encoded recording. */
+async function startRecording(maxS = OWN_MAX_S) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  const rec = new MediaRecorder(stream);
+  const chunks = [];
+  rec.addEventListener("dataavailable", (e) => chunks.push(e.data));
+  const done = new Promise((resolve) => rec.addEventListener("stop", async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    resolve(await new Blob(chunks, { type: rec.mimeType }).arrayBuffer());
+  }));
+  rec.start();
+  const timer = setTimeout(() => rec.state === "recording" && rec.stop(), maxS * 1000);
+  return { stop: () => { clearTimeout(timer); if (rec.state === "recording") rec.stop(); return done; }, done };
 }
 
 /* "German (Austria)" for de-AT, from the browser's own names. */
@@ -123,26 +220,52 @@ function currentVoicepack() {
 /*
  * Language and voice selects filled from the relay's list, limited to the pack's language and
  * English (the device strings the clips together with the pack's); the choice is saved in
- * `settings`. Returns {langSel, voiceSel, note, ready}; onError(message) when the list cannot be loaded.
+ * `settings`. The home server's voices (and the own voice) come first, in their own group: they
+ * sound better, and their pack clips are usually made in advance. Returns {langSel, voiceSel, note,
+ * ready, refill, current, own}; onError(message) when the list cannot be loaded.
  */
 function voicePicker(settings, pack, onError) {
   const langSel = el("select", { "aria-label": "Language" });
   const voiceSel = el("select", { "aria-label": "Voice" });
   const note = el("span", { class: "unit" }, "loading the voices …");
   let voices = [];
+  let own = { available: false, languages: [] };
   /* the "multilingual" voices often mispronounce the language's own words: listed last, never the default
    * (they are a fallback for English terms like "Hike and Fly") */
   const multilingual = (v) => /multilingual/i.test(v.name);
+  const ownFits = (locale) => !!ownVoiceId(settings) && own.available && own.languages.includes(ttsLanguage(locale));
   const fillVoices = () => {
-    const list = voices.filter((v) => v.locale === langSel.value).sort((a, b) => multilingual(a) - multilingual(b));
-    voiceSel.replaceChildren(...list.map((v) => el("option", { value: v.name },
-      `${v.friendly || v.name} (${v.gender.toLowerCase()}${multilingual(v) ? ", multilingual" : ""})`)));
-    if (list.some((v) => v.name === settings.voice)) voiceSel.value = settings.voice;
-    settings.locale = langSel.value;
+    const locale = langSel.value;
+    const list = voices.filter((v) => v.locale === locale);
+    const home = list.filter((v) => v.provider === "chatterbox");
+    const edge = list.filter((v) => v.provider !== "chatterbox").sort((a, b) => multilingual(a) - multilingual(b));
+    const ownName = ownFits(locale) ? ownVoiceName(locale, ownVoiceId(settings)) : null;
+    const groups = [];
+    if (ownName || home.length) {
+      groups.push(el("optgroup", { label: "Home server (Chatterbox)" },
+        ownName ? el("option", { value: ownName }, "Own voice (your recording)") : null,
+        home.map((v) => el("option", { value: v.name }, `${v.friendly || v.name} (${(v.gender || "").toLowerCase()})`))));
+    }
+    if (edge.length) {
+      groups.push(el("optgroup", { label: "Microsoft Edge" }, edge.map((v) => el("option", { value: v.name },
+        `${v.friendly || v.name} (${(v.gender || "").toLowerCase()}${multilingual(v) ? ", multilingual" : ""})`))));
+    }
+    voiceSel.replaceChildren(...groups);
+    /* the saved voice stays; an own voice follows the language */
+    if (ownName && OWN_VOICE_RE.test(settings.voice || "")) voiceSel.value = ownName;
+    else if (list.some((v) => v.name === settings.voice)) voiceSel.value = settings.voice;
+    settings.locale = locale;
     settings.voice = voiceSel.value;
     saveTtsSettings(settings);
   };
-  const ready = fetchVoices().then((list) => {
+  /* the selected voice's entry: {name, provider, seconds, ...} (the own voice has provider "own") */
+  const current = () => {
+    if (OWN_VOICE_RE.test(voiceSel.value)) return { name: voiceSel.value, provider: "own", seconds: own.seconds || 4 };
+    return voices.find((v) => v.name === voiceSel.value) || null;
+  };
+  const ready = fetchVoiceCatalog().then((catalog) => {
+    own = catalog.own;
+    const list = catalog.voices;
     const language = (pack.language || "").toLowerCase();
     /* the pack's language in every region, English as US and UK only (a dozen more regions just
      * clutter the list), and the pack's own locale whatever it is */
@@ -160,10 +283,12 @@ function voicePicker(settings, pack, onError) {
     const saved = settings.locale && locales.includes(settings.locale) && lower(settings.locale).split("-")[0] === language ? settings.locale : null;
     const wanted = saved || locales.find((l) => lower(l) === lower(pack.tts)) || locales.find((l) => lower(l).startsWith(language)) || locales[0];
     langSel.value = wanted;
-    const own = locales.filter((l) => l.split("-")[0].toLowerCase() === language).length;
-    note.textContent = language === "en" ? `${voices.length} English voices in ${locales.length} regions`
-      : own ? `${voices.length} voices: ${pack.label.replace(/ \(.*\)$/, "")} and English`
-        : `no ${pack.label} voices at the service; English only`;
+    const native = locales.filter((l) => l.split("-")[0].toLowerCase() === language).length;
+    const home = voices.filter((v) => v.provider === "chatterbox").length;
+    note.textContent = (language === "en" ? `${voices.length} English voices in ${locales.length} regions`
+      : native ? `${voices.length} voices: ${pack.label.replace(/ \(.*\)$/, "")} and English`
+        : `no ${pack.label} voices at the service; English only`) +
+      (home ? `, ${home} of them on the home server` : own.available ? "; the home server is online" : "");
     fillVoices();
   }).catch((e) => {
     note.textContent = "";
@@ -171,7 +296,7 @@ function voicePicker(settings, pack, onError) {
   });
   langSel.addEventListener("change", fillVoices);
   voiceSel.addEventListener("change", () => { settings.voice = voiceSel.value; saveTtsSettings(settings); });
-  return { langSel, voiceSel, note, ready };
+  return { langSel, voiceSel, note, ready, refill: fillVoices, current, own: () => own };
 }
 
 /* ---- the clip ---- */
@@ -315,9 +440,10 @@ function buildClip(entry, settings) {
   return entry.built;
 }
 
-/* Speaks `text` and keeps the raw audio; the returned entry also holds the clip built with the settings. */
-async function generateClip(text, settings, vol = 1, maxS = CLIP_MAX_S) {
-  const mp3 = await fetchTts(settings.voice, text, { pitch: 0, rate: 0 }); /* prosody is applied here, live */
+/* Speaks `text` and keeps the raw audio; the returned entry also holds the clip built with the settings.
+ * opts: {bulk, onWait} for fetchTts. */
+async function generateClip(text, settings, vol = 1, maxS = CLIP_MAX_S, opts = {}) {
+  const mp3 = await fetchTts(settings.voice, text, { ...opts, pitch: 0, rate: 0 }); /* prosody is applied here, live */
   const entry = { raw: await decodeRaw(mp3, maxS), vol, maxS, text };
   const b = buildClip(entry, settings);
   return Object.assign(entry, { bytes: b.bytes, seconds: b.seconds, gainDb: b.gainDb });

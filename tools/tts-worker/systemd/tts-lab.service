@@ -1,0 +1,30 @@
+[Unit]
+Description=Chatterbox lab (test bench and voice editor, home LAN only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=tts
+Group=tts
+WorkingDirectory=/opt/tts/worker
+EnvironmentFile=/etc/tts/worker.env
+Environment=HOME=/var/lib/tts
+Environment=HF_HUB_OFFLINE=1
+Environment=GRADIO_ANALYTICS_ENABLED=False
+Environment=TQDM_DISABLE=1
+Environment=NUMBA_CACHE_DIR=/var/lib/tts/cache/numba
+Environment=MPLCONFIGDIR=/var/lib/tts/cache/matplotlib
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/tts/venv/bin/python /opt/tts/worker/lab.py
+Restart=on-failure
+RestartSec=10
+StateDirectory=tts
+StateDirectoryMode=0750
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/tts
+
+[Install]
+WantedBy=multi-user.target
