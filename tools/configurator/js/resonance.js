@@ -17,8 +17,9 @@
 const RES = {
   f0: 200, f1: 5000,   /* the device plays 10..5000 Hz (firmware piezo_start) */
   toneMs: 250,         /* each step */
-  gapMs: 300,          /* silence after it */
-  slackS: 0.3,         /* a tone starts up to this long after its command was sent (Bluetooth, audio input); <= gap */
+  gapMs: 500,          /* silence after it */
+  slackS: 0.5,         /* a tone starts up to this long after its command was sent (Bluetooth, audio input; an Android
+                        * phone 2026-10-16: 130-370 ms); <= gap, so the next tone stays out of the window */
   windowS: 0.16,       /* analysis window inside a tone */
   hopS: 0.01,
   noiseS: 0.8,         /* silence recorded before the first tone */
@@ -385,8 +386,8 @@ function resonanceResult(r, mic, profileBand) {
 function resonanceFieldset() {
   let vol = 60, perOctave = 12, last = null;
   const volBox = slider("60", "60", (v) => { vol = parseInt(v, 10); }, null, PIEZO_STEPS);
-  const resSel = input({ type: "select", options: [["12", "Quick: 1/12 octave, about 35 s"],
-    ["24", "Fine: 1/24 octave, about 70 s"]] }, "12", (v) => { perOctave = parseInt(v, 10); });
+  const resSel = input({ type: "select", options: [["12", "Quick: 1/12 octave, about 45 s"],
+    ["24", "Fine: 1/24 octave, about 90 s"]] }, "12", (v) => { perOctave = parseInt(v, 10); });
   const status = el("p", { class: "hint" }, "");
   const result = el("div", { class: "res-result" });
   const downloads = el("div", { class: "buttons" });

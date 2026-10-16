@@ -58,7 +58,7 @@ const marks = [];
 let t = Math.round(RES.noiseS * rate);
 for (const f of freqs) {
   marks.push(t);
-  const start = t + Math.round((0.03 + 0.2 * rnd()) * rate); /* Bluetooth and audio input delay */
+  const start = t + Math.round((0.03 + 0.4 * rnd()) * rate); /* Bluetooth and audio input delay (a phone: up to 0.4 s) */
   if (f !== missing) {
     for (const h of harmonics(f)) {
       const w = (2 * Math.PI * h.n * f) / rate, amp = h.amp * scale;
