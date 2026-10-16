@@ -43,6 +43,9 @@ class Languages(unittest.TestCase):
         self.assertGreater(plausible_seconds("Halte die Taste zum Zurücksetzen auf Werkseinstellungen gedrückt"), 3.9)
         self.assertLess(plausible_seconds("eintausendzweihundertdreißig Meter"), 4.5 + 0.5)
         self.assertLess(plausible_seconds("1230 Meter"), 4.5)
+        self.assertGreater(plausible_seconds("GPS ok"), 1.3)
+        spoken = "zweiundvierzig Kilometer pro Stunde"
+        self.assertTrue(2.5 < plausible_seconds(spoken) < 4.4)  # right: 2.5 s, garbled: 4.4 s
 
 
 if __name__ == "__main__":

@@ -51,12 +51,21 @@ function renderSpeaker() {
   const fileInput = el("input", { type: "file", accept: "audio/*", hidden: true });
   const openBtn = el("button", { type: "button" }, "Open a recording …");
   const delBtn = el("button", { type: "button" }, "Delete my recording voice");
+  const dlBtn = el("button", { type: "button", disabled: true, title: "The recording as sent (WAV): open it here again later; " +
+    "it is kept nowhere else" }, "⬇ Download my recording");
+  let lastWav = null; /* the recording as sent, for the download */
+  let offline = false;
   const readAloud = el("p", { class: "sub" }, "");
   const ownId = () => ownVoiceId(tts);
+  /* steps 2 and 3 stay greyed out until there is a recording voice */
   const refreshOwn = () => {
+    const ready = !!ownId() && !offline;
     delBtn.hidden = !ownId();
     if (!recStatus.textContent) recStatus.textContent = ownId() ? "Your recording voice is on the voice server: try it below." : "";
-    publishBtn.disabled = !ownId();
+    for (const card of [tryCard, publishCard]) {
+      card.disabled = !ready;
+      card.classList.toggle("inactive", !ready);
+    }
   };
   let left = false; /* the view was left: a recording stopped by that is not sent */
   const sendOwn = async (encoded) => {
@@ -67,6 +76,8 @@ function renderSpeaker() {
       recStatus.textContent = "Converting …";
       const wav = await recordingToWav(encoded);
       if (wav.seconds < 6) throw new Error(`The recording has ${wav.seconds.toFixed(1)} s of sound; 10 to 15 s are needed.`);
+      lastWav = wav.bytes;
+      dlBtn.disabled = false;
       recStatus.textContent = `Sending ${wav.seconds.toFixed(0)} s; the voice server makes the voice from it (a few seconds) …`;
       const made = await createOwnVoice(wav.bytes);
       const old = ownId();
@@ -121,12 +132,14 @@ function renderSpeaker() {
     }
     refreshOwn();
   });
+  dlBtn.addEventListener("click", () => { if (lastWav) downloadBytes("my-voice-recording.wav", lastWav); });
   const recordCard = fieldset({ title: "1. Your recording", help: "10 to 15 s of you reading calmly, in a quiet room, in " +
       "the language the voice shall speak - every recording program works (WAV or FLAC at 44.1/48 kHz is best; a phone's " +
-      "voice memo works too). It becomes a voice only you can use until you make it a template below." },
+      "voice memo works too). It becomes a voice only you can use until you make it a template below. The voice server " +
+      "keeps no recording: download it to open it here again later." },
   readAloud,
   el("label", { class: "consent", for: consent.id }, consent, " This is my own voice, or the speaker has allowed me to use it."),
-  el("div", { class: "buttons" }, recBtn, openBtn, fileInput, delBtn), recStatus);
+  el("div", { class: "buttons" }, recBtn, openBtn, fileInput, dlBtn, delBtn), recStatus);
 
   /* ---- 2. trying it ---- */
   const localeSel = el("select", { "aria-label": "Language" });
@@ -154,14 +167,13 @@ function renderSpeaker() {
     if (!text) { tryStatus.textContent = "Type a sentence or pick a line."; return; }
     genBtn.disabled = true;
     tryStatus.textContent = "Generating …";
-    const t0 = Date.now();
     try {
-      const mp3 = await fetchTts(ownVoiceName(localeSel.value, ownId()), text, { settings: chatter(),
-        onWait: (s) => { tryStatus.textContent = `The voice server is still at it, asking again in ${s} s …`; } });
-      entry = { raw: await decodeRaw(mp3, 5), vol: 1, maxS: 5, text };
+      entry = await generateClip(text, { ...TTS_DEFAULTS, ...audio(), voice: ownVoiceName(localeSel.value, ownId()) }, 1, 5,
+        { settings: chatter(), onWait: (s) => { tryStatus.textContent = `The voice server is still at it, asking again in ${s} s …`; } });
       const b = buildClip(entry, audio());
-      tryStatus.textContent = `"${text}": ${b.seconds.toFixed(1)} s, made in ${((Date.now() - t0) / 1000).toFixed(1)} s ` +
-        "(the same text with the same settings comes from the cache).";
+      /* the text as the model got it (numbers as words), and "cached" for a clip that came back too fast to be made */
+      tryStatus.textContent = `"${text}"${entry.spoken && entry.spoken !== text ? ` → "${entry.spoken}"` : ""}, ` +
+        `${b.seconds.toFixed(1)} s${entry.ms < 500 ? " (cached)" : ""}`;
       playClip(b.bytes);
     } catch (e) {
       tryStatus.textContent = e.message;
@@ -216,28 +228,31 @@ function renderSpeaker() {
     });
   }
   localeSel.addEventListener("change", () => { sp.locale = localeSel.value; saveSpeakerSettings(sp); fillPresets(); checkName(); });
-  const tryCard = fieldset({ title: "2. Try it", help: "Generates with your recording voice on the voice server. Expression, " +
-      "pace and variation are Chatterbox's own settings (a change generates the clip anew); pitch, rate and the band-pass " +
-      "are applied here, as for every clip of a pack, and heard at once on the last clip." },
+  /* top to bottom: what the voice server generates with (language, its settings, the text), what this
+   * browser does to the clip (pitch, rate, band-pass), then the buttons */
+  const tryCard = fieldset({ title: "2. Try it", help: "Generates with your recording voice on the voice server. Language, " +
+      "expression, pace and variation go to the voice server and shape the generation (a change generates the clip anew); " +
+      "pitch, rate and the band-pass are applied here, as for every clip of a pack, and heard at once on the last clip." },
   customRow("Language", localeSel, "The language the voice speaks; it sounds most natural in the language of the recording."),
-  customRow("Text", textInput), presets,
-  el("div", { class: "buttons" }, genBtn, againBtn, deviceBtn), tryStatus,
   customRow("Expression", slider("exaggeration", 0.25, 2, 0.05, (v) => v.toFixed(2), regen), "0.5 is neutral; more is livelier and often faster."),
   customRow("Pace", slider("cfg_weight", 0, 1, 0.05, (v) => v.toFixed(2), regen), "How closely it follows the text's pace; lower is " +
     "slower and more deliberate, 0 also reduces the accent of a recording in another language."),
   customRow("Variation", slider("temperature", 0.05, 2, 0.05, (v) => v.toFixed(2), regen), "Higher is more varied, lower more even."),
+  customRow("Text", textInput, "Numbers are spoken as words; the status below shows the text as the voice server got it."),
+  presets,
   customRow("Pitch", slider("pitch", -50, 50, 1, pct), "Higher or lower, in percent; large shifts sound artificial."),
   customRow("Rate", slider("rate", -50, 50, 1, pct), "Faster or slower speech, the pitch unchanged."),
   customRow("Band-pass", el("div", { class: "band" }, bandBox, lo, el("span", { class: "unit" }, "Hz to"), hi, el("span", { class: "unit" }, "Hz")),
-    "Removes the lows the speaker cannot reproduce and the hiss above."));
+    "Removes the lows the speaker cannot reproduce and the hiss above."),
+  el("div", { class: "buttons" }, genBtn, againBtn, deviceBtn), tryStatus);
 
   /* ---- 3. the template ---- */
-  const nameInput = el("input", { type: "text", maxlength: 32, placeholder: "the name others see in the voice list", "aria-label": "Name" });
+  const nameInput = el("input", { type: "text", maxlength: 32, placeholder: "e.g. Anna", "aria-label": "Name" });
   const pubLocale = el("select", { "aria-label": "Language of the template" });
   const gender = el("select", { "aria-label": "Gender" }, el("option", { value: "Female" }, "female"), el("option", { value: "Male" }, "male"));
   const nameNote = el("span", { class: "unit" }, "");
   const share = el("input", { type: "checkbox", id: `share-consent-${++uid}` });
-  const publishBtn = el("button", { type: "button", class: "primary", disabled: true }, "Create template");
+  const publishBtn = el("button", { type: "button", class: "primary" }, "Create template");
   const pubStatus = el("p", { class: "sub voice-status" }, "");
   const taken = () => {
     const name = nameInput.value.trim().toLowerCase();
@@ -275,12 +290,13 @@ function renderSpeaker() {
     } catch (e) {
       pubStatus.textContent = e.message;
     }
-    publishBtn.disabled = !ownId();
+    publishBtn.disabled = false;
   });
   const publishCard = fieldset({ title: "3. Create a template", help: "Makes your recording voice a voice for everyone: it " +
       "appears under this name in the voice list of the configurator (Custom voicepack) in this language, with the settings " +
       "above as its defaults." },
-  customRow("Name", el("div", { class: "band" }, nameInput, nameNote)),
+  customRow("Name", nameInput, "The name others see in the voice list: 2 to 32 characters, not yet taken in this language.",
+    nameNote),
   customRow("Language", pubLocale), customRow("Gender", gender),
   el("label", { class: "consent", for: share.id }, share,
     " This is my own voice, or its speaker agreed, and I agree that everyone can use it here. It is removed on request " +
@@ -290,8 +306,8 @@ function renderSpeaker() {
   /* ---- privacy ---- */
   const privacy = el("details", { class: "privacy" }, el("summary", {}, "Privacy: what happens with your recording"),
     el("p", {}, "The recording you make or open here is converted to a WAV file in your browser and sent to the voice " +
-      "service voice.breezedude.de, which passes it on to the voice server run privately by the maintainer of this " +
-      "configurator. There, the voice features Chatterbox needs to speak in your voice are computed from it. The recording " +
+      "service voice.breezedude.de, which passes it on to the voice server run privately and locally by Breezedude. " +
+      "There, the voice features Chatterbox needs to speak in your voice are computed from it. The recording " +
       "itself is not stored, only these features, under a random ID that only your browser knows (and your configuration, " +
       "once you save the generator settings there). Clips generated with it are kept on that server as a cache."),
     el("p", {}, "As long as you only try it, the voice is yours alone: nobody else can find or use it, and \"Delete my " +
@@ -308,7 +324,9 @@ function renderSpeaker() {
     const locales = SPEAKER_LOCALES.filter((l) => c.own.languages.includes(ttsLanguage(l)));
     if (!c.own.available || !locales.length) {
       recStatus.textContent = "The voice server at home is offline right now: try again later.";
-      recBtn.disabled = openBtn.disabled = genBtn.disabled = publishBtn.disabled = true;
+      recBtn.disabled = openBtn.disabled = true;
+      offline = true;
+      refreshOwn();
       return;
     }
     const opts = () => locales.map((l) => el("option", { value: l }, localeLabel(l)));

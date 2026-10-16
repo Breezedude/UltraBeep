@@ -35,7 +35,7 @@ from textnorm import plausible_seconds, prepare
 SR = 24000
 TOKENS_PER_S = 25
 # Part of every cache key: change it when the audio for the same voice and text changes.
-TAG = "chatterbox-mtl-v3/t3-bf16/meanflow-2/textnorm-1/mp3-64k"
+TAG = "chatterbox-mtl-v3/t3-bf16/meanflow-2/textnorm-1/length-2/mp3-64k"
 DEFAULT_SETTINGS = {"exaggeration": 0.5, "cfg_weight": 0.5, "temperature": 0.8}
 MIN_REFERENCE_S = 5.0
 MAX_REFERENCE_S = 15.0

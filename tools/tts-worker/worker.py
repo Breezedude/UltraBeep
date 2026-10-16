@@ -5,7 +5,7 @@ shared secret), so the home network needs no open port. The relay sends jobs ove
 worker answers from its disk cache or synthesizes with Chatterbox in a process pool:
 
   relay -> worker  {"type": "speak", "id", "voice": "cb:de-DE-florian", "text", "settings"?}
-  worker -> relay  {"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms"}
+  worker -> relay  {"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms", "spoken"}
   relay -> worker  {"type": "clone", "id", "wav": base64, "consent": true}
   worker -> relay  {"type": "cloned", "id", "voice_id", "seconds"}
   relay -> worker  {"type": "forget", "id", "voice_id"}
@@ -45,7 +45,7 @@ from websockets.asyncio.client import connect
 import engine
 from cache import Cache
 from packs import PackError, Packs
-from textnorm import LANGUAGES
+from textnorm import LANGUAGES, prepare
 from voices import UnknownVoice, VoiceRefused, Voices, clean_settings
 
 log = logging.getLogger("tts-worker")
@@ -132,7 +132,7 @@ class Worker:
         ms = int((time.monotonic() - t0) * 1000)
         log.info("%s %r %d B %d ms%s", voice.name, text, len(data), ms, " (cache)" if cached else "")
         await self.send({"type": "audio", "id": msg["id"], "mime": "audio/mpeg", "cached": cached, "ms": ms,
-                         "data": base64.b64encode(data).decode()})
+                         "spoken": prepare(text, voice.language), "data": base64.b64encode(data).decode()})
 
     async def clone(self, msg):
         if msg.get("consent") is not True:

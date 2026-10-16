@@ -59,7 +59,7 @@ function fakeWorker(secret = SECRET, opts = {}) {
       await sleep(w.delay);
       if (msg.type === "speak") {
         if (msg.voice.endsWith("missing")) send({ type: "error", id: msg.id, status: 404, message: "no such voice" });
-        else send({ type: "audio", id: msg.id, mime: "audio/mpeg", ms: 1500, cached: false,
+        else send({ type: "audio", id: msg.id, mime: "audio/mpeg", ms: 1500, cached: false, spoken: `gesagt: ${msg.text}`,
           data: Buffer.from(`MP3:${msg.text}${msg.settings ? JSON.stringify(msg.settings) : ""}`).toString("base64") });
       } else if (msg.type === "clone") {
         send({ type: "cloned", id: msg.id, voice_id: OWN_ID, seconds: 9.5 });
@@ -123,6 +123,7 @@ try {
   const before = w.got.length;
   r = await speak(VOICE, "Hallo Welt");
   check(r.ok && (await r.text()) === "MP3:Hallo Welt" && w.got.length === before, "second request served from the relay cache");
+  check(decodeURIComponent(r.headers.get("x-spoken-text") || "") === "gesagt: Hallo Welt", "the spoken text comes along, from the cache too");
 
   /* two requests for one new clip share a job */
   const [a, b] = await Promise.all([speak(VOICE, "Thermik"), speak(VOICE, "Thermik")]);

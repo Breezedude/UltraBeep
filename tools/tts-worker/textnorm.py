@@ -63,6 +63,8 @@ def prepare(text, lang):
 
 def plausible_seconds(text):
     """The longest a clip of `text` (as spoken) should take. Chatterbox sometimes rambles on after the
-    text; a longer result is generated again. Measured: 1.0 s for "Abflug", 3.2 to 3.9 s for the 64
-    characters of the longest catalogue line, 4.5 s for a "1230 Meter" with an invented tail."""
-    return 1.5 + 0.1 * len(text)
+    text or garbles a long word; such a result is longer, and is generated again. Measured: 1.0 s for
+    "Abflug", 1.3 s for "GPS ok", 2.5 s for "zweiundvierzig Kilometer pro Stunde" (garbled: 4.4 s),
+    3.2 to 3.9 s for the 64 characters of the longest catalogue line, 4.5 s for a "1230 Meter" with an
+    invented tail."""
+    return 1.2 + 0.07 * len(text)

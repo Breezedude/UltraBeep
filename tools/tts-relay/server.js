@@ -289,6 +289,7 @@ function onWorkerMessage(w, raw) {
   } else if (msg.type === "audio") {
     if (!msg.cached && msg.ms > 0) w.seconds = Math.round((0.8 * w.seconds + 0.2 * msg.ms / 1000) * 10) / 10;
     const audio = Buffer.from(String(msg.data || ""), "base64");
+    if (msg.spoken) audio.spoken = String(msg.spoken).slice(0, 400); /* the text as the model got it */
     if (job.key) cachePut(job.key, audio); /* also when every request gave up waiting: the retry finds it */
     settle(job, null, audio);
   } else {
@@ -380,7 +381,7 @@ function cors(req, res) {
   if (allow) {
     res.setHeader("Access-Control-Allow-Origin", allow);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Expose-Headers", "Retry-After");
+    res.setHeader("Access-Control-Expose-Headers", "Retry-After, X-Spoken-Text");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Upload-Token");
     res.setHeader("Access-Control-Max-Age", "600");
     if (allow !== "*") res.setHeader("Vary", "Origin");
@@ -443,6 +444,7 @@ async function workerSpeech(res, ip, voice, text, key, bulk, settings) {
     }
   }
   console.log(`${ip} ${voice} "${text}" ${audio.length} B ${Date.now() - t0} ms${cached ? " (cache)" : ""}`);
+  if (audio.spoken) res.setHeader("X-Spoken-Text", encodeURIComponent(audio.spoken)); /* numbers spelled out etc. */
   send(res, 200, audio, "audio/mpeg");
 }
 

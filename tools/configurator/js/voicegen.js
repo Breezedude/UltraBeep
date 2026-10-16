@@ -249,7 +249,8 @@ function renderVoicepack() {
       const c = await generateClip(text, settings, 1, CLIP_MAX_S, { onWait: waiting(edStatus, "Generating") });
       G.set(name, c);
       if (!edProfile) { noteText(name, text); showStart(); } /* a changed text stays with the pack */
-      edStatus.textContent = `Generated: ${c.seconds.toFixed(2)} s, ${(c.bytes.length / 1024).toFixed(1)} kB.`;
+      edStatus.textContent = `Generated${c.spoken && c.spoken !== text ? `: "${c.spoken}"` : ""}, ${c.seconds.toFixed(2)} s, ` +
+        `${(c.bytes.length / 1024).toFixed(1)} kB${c.ms < 500 ? " (cached)" : ""}.`;
       playClip(c.bytes);
       renderCatalogue();
     } catch (e) {
@@ -399,7 +400,7 @@ function renderVoicepack() {
   });
 
   /* ---- sharing the pack with everyone ---- */
-  const shareName = el("input", { type: "text", maxlength: 40, placeholder: "the name others see in the list", "aria-label": "Pack name" });
+  const shareName = el("input", { type: "text", maxlength: 40, placeholder: "e.g. Katja calm", "aria-label": "Pack name" });
   const shareNote = el("span", { class: "unit" }, "");
   const shareOk = el("input", { type: "checkbox", id: `pack-consent-${++uid}` });
   const shareBtn = el("button", { type: "button", class: "primary" }, "Share this pack");
@@ -445,7 +446,8 @@ function renderVoicepack() {
   const shareCard = fieldset({ title: "Share this pack", help: "Publishes the whole pack generated above - its clips, voice, " +
       "settings and changed texts - for everyone: it appears under Voice in the list of this language, where others hear, " +
       "download or start from it. The file is kept on the voice server at home." },
-  customRow("Name", el("div", { class: "band" }, shareName, shareNote)),
+  customRow("Name", shareName, "The name others see in the list of this language's packs: 2 to 40 characters, not yet taken.",
+    shareNote),
   el("label", { class: "consent", for: shareOk.id }, shareOk,
     " I publish this pack for everyone. Its voice is one I may use, and its texts are fine for all to hear. It is removed " +
     "on request only: write to info@breezedude.de."),

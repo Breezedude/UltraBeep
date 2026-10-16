@@ -96,7 +96,8 @@ async function serviceError(res) {
 /*
  * The MP3 of `text` in `voice`; pitch and rate in percent (the relay's prosody, Edge voices only).
  * opts.bulk: a clip of a whole pack (the home server makes single clips first); opts.onWait(seconds)
- * is told when a home-server clip takes longer and is asked for again.
+ * is told when a home-server clip takes longer and is asked for again; opts.meta gets `spoken`, the
+ * text as the home server's model got it (numbers spelled out), when the relay tells it.
  */
 async function fetchTts(voice, text, opts = {}) {
   for (let attempt = 0; ; attempt++) {
@@ -106,7 +107,12 @@ async function fetchTts(voice, text, opts = {}) {
         pitch: Math.round(opts.pitch || 0), rate: Math.round(opts.rate || 0), priority: opts.bulk ? "bulk" : undefined,
         settings: opts.settings || undefined }), /* Chatterbox settings tried on the Custom speaker page */
     });
-    if (res.ok) return res.arrayBuffer();
+    if (res.ok) {
+      if (opts.meta) {
+        try { opts.meta.spoken = decodeURIComponent(res.headers.get("X-Spoken-Text") || ""); } catch (e) { opts.meta.spoken = ""; }
+      }
+      return res.arrayBuffer();
+    }
     const wait = parseInt(res.headers.get("Retry-After"), 10);
     if (res.status === 503 && wait > 0 && attempt < TTS_RETRIES) {
       if (opts.onWait) opts.onWait(wait);
@@ -498,11 +504,14 @@ function buildClip(entry, settings) {
   return entry.built;
 }
 
-/* Speaks `text` and keeps the raw audio; the returned entry also holds the clip built with the settings.
- * opts: {bulk, onWait} for fetchTts. */
+/* Speaks `text` and keeps the raw audio; the returned entry also holds the clip built with the settings,
+ * `spoken` (the text as the model got it, if the service tells) and `ms` (the time it took).
+ * opts: {bulk, onWait, settings} for fetchTts. */
 async function generateClip(text, settings, vol = 1, maxS = CLIP_MAX_S, opts = {}) {
-  const mp3 = await fetchTts(settings.voice, text, { ...opts, pitch: 0, rate: 0 }); /* prosody is applied here, live */
-  const entry = { raw: await decodeRaw(mp3, maxS), vol, maxS, text };
+  const meta = {};
+  const t0 = performance.now();
+  const mp3 = await fetchTts(settings.voice, text, { ...opts, meta, pitch: 0, rate: 0 }); /* prosody is applied here, live */
+  const entry = { raw: await decodeRaw(mp3, maxS), vol, maxS, text, spoken: meta.spoken || "", ms: performance.now() - t0 };
   const b = buildClip(entry, settings);
   return Object.assign(entry, { bytes: b.bytes, seconds: b.seconds, gainDb: b.gainDb });
 }

@@ -262,7 +262,8 @@ button.play.danger:hover { color: var(--error); border-color: var(--error); }
 .band input[type=number] { width: 90px; }
 .band select { width: auto; }
 .pack { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--border); }
-/* Custom speaker, sharing */
+/* Custom speaker, sharing; a step that waits for an earlier one is greyed out */
+fieldset.inactive { opacity: .5; }
 .consent { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; margin: 8px 0 2px; max-width: 72ch; }
 .consent input { margin-top: 3px; flex: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
