@@ -18,6 +18,7 @@
 #include "nmea.h"
 #include "rawlog.h"
 #include "rtc_time.h"
+#include "system.h"
 
 #define GOOD_SNR         30U   /* dB-Hz */
 #define SAT_TIMEOUT_MS   3000U
@@ -29,6 +30,17 @@
 #define POSITION_SAVE_MS 60000U
 #define BAUD_DEFAULT     115200U
 #define OFF_MIN_MS       500U  /* a restart keeps the module off this long: it must forget the baud rate */
+/* Only a cycle faster than this needs more than the factory 115200 baud: 5 Hz with GGA, RMC, GSA and GSV of
+ * all systems is 1.3 kB/s measured (2026-10-16), a ninth of 115200 baud. Since 10 Hz is gone no cycle does,
+ * so the module keeps its factory rate: should it restart itself, it talks at the rate we listen at (the
+ * stock firmware, 115200 at 1 Hz, had no gap in 50 h of flights on the v3 in 2026; ours at 460800 had a
+ * silence every 100 s or so in the air). */
+#define FAST_UART_BELOW_MS 200U
+/* Diagnostics in the raw log (the v3's silences in flight): */
+#define QUIET_REPORT_MS  2000U  /* no sentence this long: what the UART received meanwhile */
+#define STATS_MS         60000U /* the UART counters this often */
+#define SLOW_RMC_MS      900U   /* sentences this far apart at a faster cycle: the module fell back to 1 Hz */
+#define SLOW_RMC_RUN     3U     /* ... this many times in a row */
 
 typedef enum { CMD_START, CMD_STOP, CMD_SEND, CMD_BOOT_PROBE } cmd_type_t;
 
@@ -66,6 +78,14 @@ static bool expected_failed;
 static uint8_t gsa_best;      /* best fix type of the GSA sentences since the last GGA */
 static uint32_t fix_lost_tick;
 static uint32_t last_nmea_tick; /* last sentence with a good checksum (the silence watchdog) */
+/* the UART counters at the last good sentence and the first bytes after it: what a silence consists of */
+static uint32_t line_rx_bytes, line_rx_errors, line_printable, line_overruns, line_bad;
+static uint8_t after_line[16];
+static uint8_t after_line_n;
+static uint32_t quiet_reported; /* tick of the last report of the current quiet spell, 0 = none */
+static uint32_t stats_tick;
+static uint32_t last_rmc_tick, slow_rmc_ms;
+static uint8_t slow_rmc_run;
 static uint32_t restarts;       /* restarts by the silence watchdog since power on */
 static uint32_t last_position_save;
 static uint32_t power_off_tick;
@@ -571,7 +591,17 @@ static void handle_line(char *line)
     return;
   }
   st.lines++;
+  if (quiet_reported) {
+    rawlog_event("gps talks again after %lu ms without a sentence", (unsigned long)(HAL_GetTick() - last_nmea_tick));
+    quiet_reported = 0;
+  }
   last_nmea_tick = HAL_GetTick();
+  line_rx_bytes = rx_bytes;
+  line_rx_errors = rx_errors;
+  line_printable = printable_bytes;
+  line_overruns = overruns;
+  line_bad = st.bad_checksums;
+  after_line_n = 0;
   if (st.lines > 100U) {
     restarts = 0; /* the module talks again: the backoff starts over next time */
   }
@@ -589,6 +619,17 @@ static void handle_line(char *line)
     on_gga(f, n);
     nmea_epoch_gga(&epoch, f, n);
   } else if (strncmp(type, "RMC", 3) == 0) {
+    /* one RMC per epoch: sentences a second apart at a 5 Hz cycle mean the module restarted with its defaults */
+    uint32_t now = HAL_GetTick();
+    if (st.state != GPS_STARTING && st.cycle_ms < 1000U && last_rmc_tick && now - last_rmc_tick >= SLOW_RMC_MS) {
+      slow_rmc_ms = now - last_rmc_tick;
+      if (slow_rmc_run < 255U) {
+        slow_rmc_run++;
+      }
+    } else {
+      slow_rmc_run = 0;
+    }
+    last_rmc_tick = now;
     on_rmc(f, n);
     gps_fix_t done;
     if (nmea_epoch_rmc(&epoch, f, n, &done)) {
@@ -614,6 +655,9 @@ static void process_bytes(const uint8_t *b, size_t n)
 {
   for (size_t i = 0; i < n; i++) {
     char c = (char)b[i];
+    if (after_line_n < sizeof(after_line)) {
+      after_line[after_line_n++] = b[i];
+    }
     if (c == '\n') {
       if (line_len && line_buf[line_len - 1] == '\r') {
         line_len--;
@@ -883,8 +927,8 @@ static void start_sequence(gps_start_t mode)
   }
   select_systems();
   select_cycle();
-  if (st.cycle_ms < 1000U && !select_baud()) {
-    /* 10 Hz with GSV of several systems would fill 115200 baud: back to 1 Hz */
+  if (st.cycle_ms < FAST_UART_BELOW_MS && !select_baud()) {
+    /* a cycle this fast with GSV of several systems would fill 115200 baud: back to 1 Hz */
     command("GSOP", "1 1000 0", "[GSOP] Done");
     st.cycle_ms = 1000U;
     log_printf("GPS: 1 fix per second (no faster UART)");
@@ -1095,6 +1139,94 @@ static void boot_probe(uint32_t baud, unsigned seconds)
   st.state = GPS_OFF;
 }
 
+/* The settings again, without switching the module off: it keeps what it knows and finds the fix in seconds. */
+static bool resume_in_place(void)
+{
+  if (!command_ms("GSTP", NULL, "[GSTP] Done", 1500)) {
+    return false;
+  }
+  command("BSSL", "45", "[BSSL] Done");
+  command("ABUP", "0", "[ABUP] Done");
+  select_systems();
+  st.cycle_ms = 1000U;
+  select_cycle();
+  start_positioning();
+  last_nmea_tick = HAL_GetTick();
+  last_rmc_tick = 0;
+  slow_rmc_run = 0;
+  quiet_reported = 0;
+  return true;
+}
+
+/*
+ * The silence watchdog fired: does the module still answer, at our rate or at the factory rate (it restarted
+ * itself and came up with its defaults)? An answering module is set up again in place; true then.
+ */
+static bool probe_and_resume(void)
+{
+  uint32_t baud = st.baud;
+  bool answers = command("WUP", NULL, "[WUP] Done") || command("WUP", NULL, "[WUP] Done");
+  if (!answers && baud != BAUD_DEFAULT) {
+    uart_config(BAUD_DEFAULT);
+    answers = command("WUP", NULL, "[WUP] Done");
+    if (answers) {
+      st.baud = BAUD_DEFAULT;
+    } else {
+      uart_config(baud);
+    }
+  }
+  const char *what = !answers ? "no answer" : st.baud == baud ? "answers at our rate" : "answers at 115200 baud (it restarted itself)";
+  rawlog_event("gps probe: %s", what);
+  log_printf("GPS: probe: %s", what);
+  if (!answers) {
+    return false;
+  }
+  bool ok = resume_in_place();
+  rawlog_event("gps %s without a power cycle", ok ? "set up again" : "could not be set up");
+  log_printf("GPS: %s without a power cycle", ok ? "set up again" : "could not be set up");
+  return ok;
+}
+
+/* No sentence for QUIET_REPORT_MS: what arrived since the last one, every QUIET_REPORT_MS while it lasts. */
+static void quiet_report(void)
+{
+  uint32_t now = HAL_GetTick();
+  if ((st.state != GPS_SEARCHING && st.state != GPS_FIX) || !last_nmea_tick || now - last_nmea_tick < QUIET_REPORT_MS ||
+      (quiet_reported && now - quiet_reported < QUIET_REPORT_MS)) {
+    return;
+  }
+  bool first = !quiet_reported;
+  quiet_reported = now;
+  rawlog_event("gps quiet %lu s: %lu B, %lu printable, %lu FE, %lu ORE, %lu bad, %lu mV",
+               (unsigned long)((now - last_nmea_tick) / 1000U), (unsigned long)(rx_bytes - line_rx_bytes),
+               (unsigned long)(printable_bytes - line_printable), (unsigned long)(rx_errors - line_rx_errors),
+               (unsigned long)(overruns - line_overruns), (unsigned long)(st.bad_checksums - line_bad),
+               (unsigned long)system_battery_mv());
+  if (first) {
+    char hex[3 * sizeof(after_line) + 1] = "";
+    for (uint8_t i = 0; i < after_line_n; i++) {
+      snprintf(hex + 3 * i, 4, "%02x ", after_line[i]);
+    }
+    rawlog_event("gps quiet, first bytes: %s", after_line_n ? hex : "none");
+    log_printf("GPS: quiet for %lu ms, %lu bytes since the last sentence", (unsigned long)(now - last_nmea_tick),
+               (unsigned long)(rx_bytes - line_rx_bytes));
+  }
+}
+
+/* The UART counters once a minute: the baseline the quiet reports compare with. */
+static void stats_report(void)
+{
+  uint32_t now = HAL_GetTick();
+  if ((st.state != GPS_SEARCHING && st.state != GPS_FIX) || now - stats_tick < STATS_MS) {
+    return;
+  }
+  stats_tick = now;
+  rawlog_event("gps stats: %lu ln, %lu bad, %lu B, %lu FE, %lu ORE, %lu skip, %lu Bd, %u ms, %u/%u sats",
+               (unsigned long)st.lines, (unsigned long)st.bad_checksums, (unsigned long)rx_bytes,
+               (unsigned long)rx_errors, (unsigned long)overruns, (unsigned long)st.placeholders,
+               (unsigned long)st.baud, st.cycle_ms, st.sats_good, st.sats_view);
+}
+
 static void gps_task(void *arg)
 {
   (void)arg;
@@ -1122,15 +1254,31 @@ static void gps_task(void *arg)
     size_t n = xStreamBufferReceive(rx, buf, sizeof(buf), pdMS_TO_TICKS(100));
     process_bytes(buf, n);
     update_good_count();
-    /* A module that went silent (brown-out, a baud rate it forgot) is started again; the wait
-     * doubles with every restart in a row, up to 80 s. */
+    quiet_report();
+    stats_report();
+    if (slow_rmc_run >= SLOW_RMC_RUN && st.state != GPS_STARTING) {
+      rawlog_event("gps sends every %lu ms instead of %u ms: it restarted itself", (unsigned long)slow_rmc_ms, st.cycle_ms);
+      log_printf("GPS: sentences every %lu ms instead of %u ms - the module restarted itself, setting it up again",
+                 (unsigned long)slow_rmc_ms, st.cycle_ms);
+      slow_rmc_run = 0;
+      bool ok = resume_in_place();
+      rawlog_event("gps %s without a power cycle", ok ? "set up again" : "could not be set up");
+    }
+    /* A module that went silent (brown-out, a baud rate it forgot) is probed first and set up again in
+     * place when it answers; otherwise switched off and started again. The wait doubles with every
+     * restart in a row, up to 80 s. */
     uint32_t limit = SILENT_MS << (restarts < 3U ? restarts : 3U);
     if (st.state != GPS_OFF && st.state != GPS_STARTING && last_nmea_tick && HAL_GetTick() - last_nmea_tick > limit) {
-      log_printf("GPS: no sentences for %lu s - restarting the module", (unsigned long)(limit / 1000U));
+      log_printf("GPS: no sentences for %lu s - probing the module", (unsigned long)(limit / 1000U));
+      rawlog_event("gps silent for %lu s: probing", (unsigned long)(limit / 1000U));
       restarts++;
-      gps_start_t mode = st.start_mode;
-      stop_now();
-      start_sequence(mode);
+      if (!probe_and_resume()) {
+        log_printf("GPS: restarting the module (power cycle)");
+        rawlog_event("gps power cycle");
+        gps_start_t mode = st.start_mode;
+        stop_now();
+        start_sequence(mode);
+      }
       last_nmea_tick = HAL_GetTick();
     }
   }

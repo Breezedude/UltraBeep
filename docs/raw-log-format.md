@@ -70,6 +70,13 @@ of each second (GGA and RMC of every epoch). Events, as text:
 * button presses, the selected profile, the vario test, the volume level
 * takeoff and landing
 * spiral mode on and off (the fusion's manoeuvre mode, `fusion.c`)
+* GNSS diagnostics (0.50): `gps stats` once a minute (sentences, bad checksums, UART bytes, framing and
+  overrun errors, skipped epochs, baud rate, cycle, good/visible satellites); `gps quiet` every 2 s
+  without a sentence (what the UART received since the last one, battery mV) with the first bytes after
+  it as hex; `gps talks again after ... ms`; when the silence watchdog fires `gps silent ... probing`,
+  `gps probe: answers at our rate / answers at 115200 baud (it restarted itself) / no answer`, then
+  `gps set up again without a power cycle` or `gps power cycle`; `gps sends every ... ms instead of
+  200 ms` when the module fell back to its factory 1 Hz
 * single taps (jerk and threshold) and double taps
 * automatic announcements
 * the thermal events (thermal climb, thermal exit, wind, glide ratio)
