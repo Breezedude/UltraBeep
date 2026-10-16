@@ -2,7 +2,8 @@
  * Shared voice packs: their descriptions in SQLite (node:sqlite, no extra package) next to the
  * relay; the .ubpack files live with the TTS worker at home and pass through the relay in parts.
  * A pack is published by anyone at once and deleted by the operator only (/v1/admin/packs).
- *   config: {"settings": {pitch, rate, bandpass, lo, hi}, "overrides": {clip name: spoken text}}
+ *   config: {"settings": {pitch, rate, bandpass, lo, hi}, "overrides": {clip name: spoken text},
+ *            "languages": {clip name: language the line is spoken in, when not the pack's}}
  * The overrides are the pack's own spellings of catalogue texts (a model reads "Hike and Fly" right
  * only as "Haik änd Flai"); a pack used as the start of another passes them on.
  */
@@ -38,9 +39,15 @@ export function cleanPack(body, maxChars) {
     overrides[clip] = t;
   }
   if (Object.keys(overrides).length > 2000) throw new Error("too many changed texts");
+  const languages = {};
+  for (const [clip, lang] of Object.entries(body.languages || {})) {
+    if (!CLIP_RE.test(clip) || !/^[a-z]{2}$/.test(String(lang))) throw new Error(`bad language for clip ${clip}`);
+    languages[clip] = String(lang);
+  }
+  if (Object.keys(languages).length > 2000) throw new Error("too many languages");
   const clips = clamp(body.clips, 1, 5000, 0), size = clamp(body.size, 1, 2 ** 31, 0);
   return { name, lang, voice, voiceLabel: String(body.voice_label || voice).slice(0, 60), clips, size,
-    base: PACK_ID_RE.test(body.base || "") ? body.base : null, config: { settings: cleanSettings(body.settings), overrides } };
+    base: PACK_ID_RE.test(body.base || "") ? body.base : null, config: { settings: cleanSettings(body.settings), overrides, languages } };
 }
 
 export function openPacks(file) {

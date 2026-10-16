@@ -12,14 +12,15 @@
 const STOCK_PACKS_URL = "https://stodeus.com/de/ultrabip-voicepacks";
 const PACK_DRAFT = "cfg.packDraft";
 
-/* The pack being made in Custom voicepack, per voice pack id: the shared pack it started from and its
- * changed texts {clip name: spoken text}. */
+/* The pack being made in Custom voicepack, per voice pack id: the shared pack it started from, its
+ * changed texts {clip name: spoken text} and the lines spoken in another language than the pack's
+ * {clip name: language} ("gps_ok": "en"). */
 function packDraft(id) {
   try {
     const d = JSON.parse(localStorage.getItem(PACK_DRAFT) || "{}");
-    if (d.id === id) return { base: d.base || null, baseName: d.baseName || "", overrides: d.overrides || {} };
+    if (d.id === id) return { base: d.base || null, baseName: d.baseName || "", overrides: d.overrides || {}, languages: d.languages || {} };
   } catch (e) { /* none */ }
-  return { base: null, baseName: "", overrides: {} };
+  return { base: null, baseName: "", overrides: {}, languages: {} };
 }
 
 function savePackDraft(id, draft) {
@@ -109,7 +110,7 @@ function renderVoice() {
   const asStart = (p) => async (say) => {
     say("loading …");
     const full = await fetchPack(p.id);
-    savePackDraft(packId, { base: p.id, baseName: p.name, overrides: full.overrides });
+    savePackDraft(packId, { base: p.id, baseName: p.name, overrides: full.overrides, languages: full.languages || {} });
     const s = ttsSettings();
     Object.assign(s, full.settings);
     /* a pack made elsewhere ("google:...") brings its texts and sound, not its voice */

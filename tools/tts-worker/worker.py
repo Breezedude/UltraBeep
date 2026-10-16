@@ -4,7 +4,7 @@ Runs at home next to the models and connects OUT to the relay (wss://voice.breez
 shared secret), so the home network needs no open port. The relay sends jobs over that socket; the
 worker answers from its disk cache or synthesizes with Chatterbox in a process pool:
 
-  relay -> worker  {"type": "speak", "id", "voice": "cb:de-DE-florian", "text", "settings"?}
+  relay -> worker  {"type": "speak", "id", "voice": "cb:de-DE-florian", "text", "settings"?, "language"?}
   worker -> relay  {"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms", "spoken"}
   relay -> worker  {"type": "clone", "id", "wav": base64, "consent": true}
   worker -> relay  {"type": "cloned", "id", "voice_id", "seconds"}
@@ -25,7 +25,8 @@ worker answers from its disk cache or synthesizes with Chatterbox in a process p
   worker -> relay  {"type": "hello" | "voices", "voices": [...], "slots", "seconds", "languages"}
 
 "settings" of a speak are Chatterbox settings to try (the configurator's Custom speaker page); they
-override the voice's own and are part of the cache key. When idle, the worker renders the voice pack
+override the voice's own and are part of the cache key, like "language": a line spoken in another
+Chatterbox language than the voice's own (a pack's "GPS ok" in English). When idle, the worker renders the voice pack
 texts of every public voice into the cache (PRERENDER=1), so a pack in those voices comes back at
 once. Settings come from the environment (worker.env.example).
 """
@@ -120,21 +121,25 @@ class Worker:
         except UnknownVoice as e:
             return await self.send({"type": "error", "id": msg["id"], "status": 404, "message": str(e)})
         trial = clean_settings(msg.get("settings"))  # settings tried in the configurator
+        # a line of a pack spoken in another language than the voice's ("GPS ok" in English by a German voice)
+        language = msg.get("language") if msg.get("language") in LANGUAGES else voice.language
+        key = {**trial, "language": language} if language != voice.language else trial
         t0 = self.last_user = time.monotonic()
-        data = self.cache.get(voice, text, trial)
+        data = self.cache.get(voice, text, key)
         cached = data is not None
         if not cached:
-            data, info = await self.run_job(engine.job_speak, str(voice.conds), voice.language, text,
+            data, info = await self.run_job(engine.job_speak, str(voice.conds), language, text,
                                             {**voice.settings, **trial})
-            self.cache.put(voice, text, data, trial)
+            self.cache.put(voice, text, data, key)
             self.seconds = 0.8 * self.seconds + 0.2 * info["ms"] / 1000
             if info["attempts"] > 1:
                 log.info("%s %r: %d attempts (ran on past its text)", voice.name, text, info["attempts"])
         self.voices.touch(voice)
         ms = int((time.monotonic() - t0) * 1000)
-        log.info("%s %r %d B %d ms%s", voice.name, text, len(data), ms, " (cache)" if cached else "")
+        log.info("%s%s %r %d B %d ms%s", voice.name, "" if language == voice.language else f" [{language}]", text,
+                 len(data), ms, " (cache)" if cached else "")
         await self.send({"type": "audio", "id": msg["id"], "mime": "audio/mpeg", "cached": cached, "ms": ms,
-                         "spoken": prepare(text, voice.language), "data": base64.b64encode(data).decode()})
+                         "spoken": prepare(text, language), "data": base64.b64encode(data).decode()})
 
     async def clone(self, msg):
         if msg.get("consent") is not True:

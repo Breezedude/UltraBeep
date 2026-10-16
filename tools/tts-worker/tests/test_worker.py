@@ -263,6 +263,12 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((r["type"], base64.b64decode(r["data"]), r["cached"]), ("audio", b"MP3:de:Thermik", False))
         r = await self.ask({"type": "speak", "id": "2", "voice": "cb:de-DE-anna", "text": "Thermik"})
         self.assertTrue(r["cached"])
+        r = await self.ask({"type": "speak", "id": "2b", "voice": "cb:de-DE-anna", "text": "GPS ok 2", "language": "en"})
+        self.assertEqual((base64.b64decode(r["data"]), r["spoken"], r["cached"]), (b"MP3:en:GPS ok 2", "GPS ok two", False))
+        r = await self.ask({"type": "speak", "id": "2c", "voice": "cb:de-DE-anna", "text": "GPS ok 2"})
+        self.assertEqual((base64.b64decode(r["data"]), r["spoken"]), (b"MP3:de:GPS ok 2", "GPS ok zwei"))  # cached apart
+        r = await self.ask({"type": "speak", "id": "2d", "voice": "cb:de-DE-anna", "text": "Thermik", "language": "xx"})
+        self.assertTrue(r["cached"])  # an unknown language is the voice's own
         r = await self.ask({"type": "speak", "id": "3", "voice": "cb:de-DE-nobody", "text": "Thermik"})
         self.assertEqual((r["type"], r["status"]), ("error", 404))
         r = await self.ask({"type": "speak", "id": "4", "voice": "cb:de-DE-anna", "text": " "})

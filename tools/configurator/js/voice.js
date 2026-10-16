@@ -105,7 +105,8 @@ async function fetchTts(voice, text, opts = {}) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "tts-1", input: text, voice, response_format: "mp3",
         pitch: Math.round(opts.pitch || 0), rate: Math.round(opts.rate || 0), priority: opts.bulk ? "bulk" : undefined,
-        settings: opts.settings || undefined }), /* Chatterbox settings tried on the Custom speaker page */
+        settings: opts.settings || undefined,    /* Chatterbox settings tried on the Custom speaker page */
+        language: opts.language || undefined }), /* a Chatterbox line in another language than the voice's */
     });
     if (res.ok) {
       if (opts.meta) {
@@ -203,6 +204,10 @@ const publishVoice = (body) => serviceJson("/v1/voices/public", { method: "POST"
 /* ---- the own voice (cloned on the voice server) ---- */
 
 const homeVoice = (name) => (name || "").startsWith("cb:");
+/* the languages a Chatterbox voice speaks, whatever the language of its recording */
+const CHATTERBOX_LANGUAGES = ["ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja", "ko", "ms", "nl", "no", "pl",
+  "pt", "ru", "sv", "sw", "tr", "zh"];
+const languageName = (code) => { try { return new Intl.DisplayNames(["en"], { type: "language" }).of(code); } catch (e) { return code; } };
 const ownVoiceName = (locale, id) => `cb:${locale}-own-${id}`;
 /* the Chatterbox language of a locale ("nb-NO" speaks "no") */
 const ttsLanguage = (locale) => { const l = (locale || "").split("-")[0].toLowerCase(); return l === "nb" || l === "nn" ? "no" : l; };

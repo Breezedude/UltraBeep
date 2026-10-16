@@ -419,7 +419,7 @@ const VOICE_RE = /^[A-Za-z]{2,3}-[A-Za-z0-9]{2,8}-[A-Za-z0-9]{2,40}$/;
 
 /* A worker voice: the clip from the cache, a running job for it, or a new job; a clip that takes
  * longer than workerWaitMs is answered with 503 + Retry-After and served from the cache later. */
-async function workerSpeech(res, ip, voice, text, key, bulk, settings) {
+async function workerSpeech(res, ip, voice, text, key, bulk, settings, language) {
   const t0 = Date.now();
   let audio = cache.get(key);
   const cached = !!audio;
@@ -431,7 +431,7 @@ async function workerSpeech(res, ip, voice, text, key, bulk, settings) {
           res.setHeader("Retry-After", String(cfg.rateWindowS));
           return fail(res, 429, `rate limit: ${cfg.rateLimit} requests per ${cfg.rateWindowS} s`);
         }
-        job = enqueue({ key, voice, bulk, msg: { type: "speak", voice, text, ...(settings ? { settings } : {}) } });
+        job = enqueue({ key, voice, bulk, msg: { type: "speak", voice, text, ...(settings ? { settings } : {}), ...(language ? { language } : {}) } });
       }
       audio = await waitFor(job, cfg.workerWaitMs);
     } catch (e) {
@@ -464,8 +464,10 @@ async function speech(req, res, ip) {
     if (!WORKER_VOICE_RE.test(voice)) return fail(res, 400, "voice not allowed");
     if (pitch || rate) return fail(res, 400, "pitch and rate are not available for this voice");
     const settings = trialSettings(body.settings);
-    return workerSpeech(res, ip, voice, text, `${voice}|0|0|${settings ? JSON.stringify(settings) : ""}|${text}`,
-      body.priority === "bulk", settings);
+    /* a line in another language than the voice's own (a German voice saying "GPS ok" in English) */
+    const language = /^[a-z]{2}$/.test(body.language || "") ? body.language : null;
+    return workerSpeech(res, ip, voice, text,
+      `${voice}|0|0|${settings ? JSON.stringify(settings) : ""}|${language || ""}|${text}`, body.priority === "bulk", settings, language);
   }
   if (!cfg.edge || !VOICE_RE.test(voice) || (cfg.voiceFilter && !cfg.voiceFilter.test(voice))) return fail(res, 400, "voice not allowed");
   const key = `${voice}|${pitch}|${rate}|${text}`;
@@ -703,7 +705,7 @@ const server = http.createServer(async (req, res) => {
       if (m === "GET" && pk[2]) return await packDownload(req, res, pk[1]);
       if (m === "PUT" && pk[2]) return await packPart(req, res, pk[1], url);
       const pack = packs.get(pk[1]);
-      if (m === "GET" && pack && pack.state === "ready") return send(res, 200, { ...packSummary(pack), overrides: pack.overrides });
+      if (m === "GET" && pack && pack.state === "ready") return send(res, 200, { ...packSummary(pack), overrides: pack.overrides, languages: pack.languages || {} });
     }
     const adm = /^\/v1\/admin\/packs(?:\/([a-z0-9]+))?$/.exec(p);
     if (adm) {
