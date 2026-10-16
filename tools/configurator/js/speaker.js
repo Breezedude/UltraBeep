@@ -216,11 +216,28 @@ function renderSpeaker() {
     readAloud.textContent = `Read this aloud: "${(lang ? ["reset_hold", "reset_wait", "voice_update", "press_button_to_confirm", "bluetooth_pair"]
       .map((n) => voicepackText(lang, n)).filter(Boolean).join(". ") : "a few sentences of your own") || "a few sentences of your own"}."`;
   };
+  /* while a clip is made, the controls of this step are locked (the text field stays free for the next
+   * sentence): one click, one clip, and nothing made earlier plays after it */
+  let generating = false;
+  let genSeq = 0;
+  let left = false; /* this view was replaced (redrawn or left): its clips no longer play */
+  const lockTry = (on) => {
+    for (const x of tryCard.querySelectorAll("input, select, button")) {
+      if (x !== textInput && !x.classList.contains("info")) x.disabled = on;
+    }
+    if (!on) {
+      againBtn.disabled = !entry;
+      deviceBtn.disabled = !entry || !deviceClient();
+    }
+  };
   const generate = async () => {
+    if (generating) return;
     const text = textInput.value.trim();
     if (!ownId()) { tryStatus.textContent = "Make a recording first (1)."; return; }
     if (!text) { tryStatus.textContent = "Type a sentence or pick a line."; return; }
-    genBtn.disabled = true;
+    generating = true;
+    const mine = ++genSeq;
+    lockTry(true);
     tryStatus.textContent = "Generating …";
     try {
       const voiceId = ownId();
@@ -231,13 +248,12 @@ function renderSpeaker() {
       /* the text as the model got it (numbers as words), and "cached" for a clip that came back too fast to be made */
       tryStatus.textContent = `"${text}"${entry.spoken && entry.spoken !== text ? ` → "${entry.spoken}"` : ""}, ` +
         `${b.seconds.toFixed(1)} s${entry.ms < 500 ? " (cached)" : ""}`;
-      playClip(b.bytes);
+      if (mine === genSeq && !left) playClip(b.bytes);
     } catch (e) {
       tryStatus.textContent = e.message;
     }
-    genBtn.disabled = false;
-    againBtn.disabled = deviceBtn.disabled = !entry;
-    if (!deviceClient()) deviceBtn.disabled = true;
+    generating = false;
+    lockTry(false);
   };
   genBtn.addEventListener("click", generate);
   textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") generate(); });
@@ -407,6 +423,7 @@ function renderSpeaker() {
   speakerRefresh();
   /* a redraw of this view lets a recording go on; leaving it stops the recording and keeps it */
   state.cleanup = () => {
+    left = true;
     stopPlaying();
     clearTimeout(liveTimer);
     if (ss.recording && state.view !== "speaker") { ss.left = true; ss.recording.stop(); }
