@@ -294,3 +294,37 @@ void watchdog_feed(void)
     HAL_IWDG_Refresh(&hiwdg);
   }
 }
+
+/* ---- main stack ---- */
+
+/*
+ * The main stack (MSP) below the top of RAM: main() before the scheduler, every interrupt afterwards
+ * (the USB mass storage path is the deepest). Its reservation is _Min_Stack_Size in the linker script;
+ * newlib's heap ends there. Painted with a pattern from its bottom up to just below what is in use
+ * at start; the console's `tasks` reports what never got overwritten.
+ */
+#define STACK_PATTERN 0xA5A5A5A5U
+extern uint32_t _estack;
+extern uint32_t _Min_Stack_Size;
+
+static uint32_t *stack_bottom(void)
+{
+  return (uint32_t *)((uint32_t)&_estack - (uint32_t)&_Min_Stack_Size);
+}
+
+void board_isr_stack_paint(void)
+{
+  uint32_t *sp = (uint32_t *)(__get_MSP() - 64U); /* below the frames in use now */
+  for (uint32_t *p = stack_bottom(); p < sp; p++) {
+    *p = STACK_PATTERN;
+  }
+}
+
+uint32_t board_isr_stack_reserve(void)
+{
+  const uint32_t *p = stack_bottom();
+  while (p < &_estack && *p == STACK_PATTERN) {
+    p++;
+  }
+  return (uint32_t)((const uint8_t *)p - (const uint8_t *)stack_bottom());
+}

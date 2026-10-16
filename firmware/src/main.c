@@ -20,6 +20,7 @@
 #include "config.h"
 #include "console.h"
 #include "faults.h"
+#include "fmt.h"
 #include "gps.h"
 #include "health.h"
 #include "indicator.h"
@@ -63,6 +64,7 @@ static void log_press_before_reset(boot_reason_t reason)
 int main(void)
 {
   HAL_Init();
+  board_isr_stack_paint();
   SystemClock_Config();
   board_init();
   audio_init();
@@ -81,6 +83,7 @@ int main(void)
   }
   watchdog_start();
 
+  fmt_init();
   log_init();
   storage_init();
   log_printf("%s %s (%s %s), start: %s", FW_NAME, FW_VERSION, __DATE__, __TIME__,

@@ -138,4 +138,8 @@ void board_delay_ms(uint32_t ms);
 void watchdog_start(void);
 void watchdog_feed(void);
 
+/* The main stack (interrupts once the scheduler runs): painted at start, the untouched part in bytes. */
+void board_isr_stack_paint(void);
+uint32_t board_isr_stack_reserve(void);
+
 #endif

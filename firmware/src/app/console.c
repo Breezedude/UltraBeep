@@ -31,7 +31,8 @@
 #include "usb_device.h"
 #include "version.h"
 
-#define POLL_MS 20U
+#define POLL_MS      20U
+#define IDLE_POLL_MS 100U /* nothing connected: the cable and the Bluetooth console are still noticed in time */
 
 typedef enum { SOURCE_USB, SOURCE_UART, SOURCE_BLE } source_t;
 
@@ -94,6 +95,8 @@ static void cmd_tasks(void)
     console_printf("  %-10s stack reserve %4lu bytes\r\n", st[i].pcTaskName,
                    (unsigned long)(st[i].usStackHighWaterMark * sizeof(StackType_t)));
   }
+  console_printf("  %-10s stack reserve %4lu bytes (main stack: interrupts)\r\n", "ISR",
+                 (unsigned long)board_isr_stack_reserve());
   console_printf("heap: %u bytes free, %u at the lowest, of %u\r\n", (unsigned)xPortGetFreeHeapSize(),
                  (unsigned)xPortGetMinimumEverFreeHeapSize(), (unsigned)configTOTAL_HEAP_SIZE);
 }
@@ -512,7 +515,8 @@ static void console_task(void *arg)
         console_write(&echo, 1);
       }
     }
-    vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+    bool idle = !connected && !uart_console_enabled() && !ble_console_active();
+    vTaskDelay(pdMS_TO_TICKS(idle ? IDLE_POLL_MS : POLL_MS));
   }
 }
 

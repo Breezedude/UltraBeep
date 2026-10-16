@@ -94,6 +94,7 @@ static bool confirmed;
 
 static bool gps_ok_said;
 static void set_headphones(bool on);
+static void do_update(void);
 
 /* The serial console follows system_uartconsole_bool; switched on, it gets the log so far. */
 static void apply_uart_console(void)
@@ -229,6 +230,7 @@ static void on_double_tap(void)
 
 static announce_auto_t ann_auto;
 static announcement_t ann_pending; /* groups still to be spoken, one sound_say (or the tone) each */
+static announcement_t ann_build;   /* the announcement being built (1 KB: kept off the stack; system task only) */
 static unsigned ann_next;
 static uint8_t ann_voice;
 static float climb_hist[CLIMB_AVG_S];
@@ -379,9 +381,8 @@ static void announce_trigger(announce_trigger_t t, const announce_input_t *in, b
   }
   ble_info_t ble;
   ble_get_info(&ble);
-  announcement_t a;
-  announce_build(&c->list[t], ble.connected && !request, in, &a);
-  if (!a.groups) {
+  announce_build(&c->list[t], ble.connected && !request, in, &ann_build);
+  if (!ann_build.groups) {
     return;
   }
   if (!request && announce_hold()) {
@@ -391,9 +392,9 @@ static void announce_trigger(announce_trigger_t t, const announce_input_t *in, b
   rawlog_event("announcement %s", announce_trigger_names[t]);
   if (request) {
     sound_stop();
-    announce_queue(&a, muted ? ground_voice() : system_voice());
+    announce_queue(&ann_build, muted ? ground_voice() : system_voice());
   } else {
-    announce_append(&a, system_voice());
+    announce_append(&ann_build, system_voice());
   }
 }
 
@@ -438,24 +439,43 @@ static void thermal_events(unsigned ev, uint32_t utc)
   }
 }
 
-/* Configurator play button: a trigger's list (unsaved) with demo values, at the ground volume. */
+/*
+ * Configurator play button: a trigger's list (unsaved) with demo values, at the ground volume. The request
+ * comes from the BLE task; the system task speaks it at its next tick (the queue is its own).
+ */
+static char test_trigger[16], test_items[160];
+static volatile bool test_announce_pending;
+
 void system_test_announce(const char *trigger, const char *items)
 {
+  snprintf(test_trigger, sizeof(test_trigger), "%s", trigger);
+  snprintf(test_items, sizeof(test_items), "%s", items);
+  test_announce_pending = true;
+}
+
+static void check_test_announce(void)
+{
+  if (!test_announce_pending) {
+    return;
+  }
+  test_announce_pending = false;
+  if (!system_test_allowed()) {
+    return;
+  }
   announce_list_t l;
-  announce_list_parse(&l, items);
+  announce_list_parse(&l, test_items);
   announce_input_t in;
   announce_input(&in); /* the extension words of the voice pack */
   announce_demo_input(&in);
-  in.in_flight = strcmp(trigger, "summary") != 0;
-  announcement_t a;
-  announce_build(&l, false, &in, &a);
-  if (!a.groups) {
+  in.in_flight = strcmp(test_trigger, "summary") != 0;
+  announce_build(&l, false, &in, &ann_build);
+  if (!ann_build.groups) {
     sound_melody(MELODY_ACK, ground_piezo());
     return;
   }
   sound_stop();
-  announce_queue(&a, ground_voice());
-  rawlog_event("announcement demo %s", trigger);
+  announce_queue(&ann_build, ground_voice());
+  rawlog_event("announcement demo %s", test_trigger);
 }
 
 /* Double tap while switched on: the tap trigger's list. */
@@ -490,10 +510,9 @@ static void double_tap(void)
     return;
   }
   announce_input_t in;
-  announcement_t a;
   announce_input(&in);
-  announce_build(&c->list[TRIG_TAP], false, &in, &a);
-  if (!a.groups) {
+  announce_build(&c->list[TRIG_TAP], false, &in, &ann_build);
+  if (!ann_build.groups) {
     sound_melody(MELODY_ACK, system_piezo()); /* nothing to say yet (e.g. no fix) */
     return;
   }
@@ -924,12 +943,11 @@ static void announce_summary(uint8_t voice)
   in.g_load = stats.g_max;
   ble_info_t ble;
   ble_get_info(&ble);
-  announcement_t a;
-  announce_build(&c->list[TRIG_SUMMARY], ble.connected, &in, &a);
-  if (!a.groups) {
+  announce_build(&c->list[TRIG_SUMMARY], ble.connected, &in, &ann_build);
+  if (!ann_build.groups) {
     return;
   }
-  announce_queue(&a, voice);
+  announce_queue(&ann_build, voice);
   for (int i = 0; i < 600 && (i < 3 || ann_next < ann_pending.groups || sound_busy()); i++) { /* at most 60 s */
     announce_drain();
     health_alive(HEALTH_SYSTEM);
@@ -942,17 +960,19 @@ static void announce_summary(uint8_t voice)
  * tracks (longer while connected; a button press ends it). With system_syncwhilemoving_bool the
  * IMU keeps running and the time counts from the moment the device lies still: switched off after
  * the landing, carried to the packing place, put down - Bluetooth is still on when the phone comes
- * out. Never longer than SYNC_MAX_MS. The GPS is switched off meanwhile.
+ * out. Never longer than SYNC_MAX_MS. The GPS is switched off meanwhile. True when a firmware update was
+ * requested meanwhile (the configurator may use the window): the caller installs it.
  */
-static void track_sync_window(void)
+static bool track_sync_window(void)
 {
   const config_t *cfg = config_get();
   uint32_t window_ms = (uint32_t)cfg->sync_window_s * 1000U;
   bool wait_still = cfg->sync_while_moving;
+  bool update = false;
   ble_info_t b;
   ble_get_info(&b);
   if (!b.running || vbus_present() || (window_ms == 0U && !wait_still)) {
-    return;
+    return false;
   }
   state = ST_SYNC;
   if (!wait_still) {
@@ -983,16 +1003,27 @@ static void track_sync_window(void)
       break;
     }
     event_t ev;
-    if (xQueueReceive(events, &ev, pdMS_TO_TICKS(100)) == pdTRUE && ev.type == EV_BUTTON &&
-        ev.button.type == BUTTON_DOWN) {
-      log_printf("Track sync ended by the button");
-      break;
+    if (xQueueReceive(events, &ev, pdMS_TO_TICKS(100)) == pdTRUE) {
+      if (ev.type == EV_BUTTON && ev.button.type == BUTTON_DOWN) {
+        log_printf("Track sync ended by the button");
+        break;
+      }
+      if (ev.type == EV_OFF) {
+        log_printf("Track sync ended by request");
+        break;
+      }
+      if (ev.type == EV_UPDATE) {
+        log_printf("Track sync ended: update requested");
+        update = true;
+        break;
+      }
     }
   }
   if (wait_still) {
     sensors_stop();
   }
   indicator_off();
+  return update;
 }
 
 static void shutdown(void)
@@ -1012,8 +1043,8 @@ static void shutdown(void)
     }
   } else {
     announce_summary(voice);
-    if (flown) {
-      track_sync_window();
+    if (flown && track_sync_window()) {
+      do_update(); /* returns only without a valid image */
     }
   }
   go_off();
@@ -1153,6 +1184,7 @@ static void check_config_update(void)
   snprintf(language, sizeof(language), "%s", c->language);
   log_printf("Config: %s - reloading", from_app ? "new file from BipLink" : "the configurator asked to apply it");
   sound_say1("loading_config", system_voice());
+  vario_audio_set(NULL, 0); /* the tone table is rebuilt in place: no tones from a half-built one (set again below) */
   config_adopt_new();
   config_load(config_get());
   apply_uart_console();
@@ -1322,8 +1354,8 @@ static void do_update(void)
     log_printf("Update: nothing installed");
     if (state == ST_USB) {
       enter_usb();
-    } else if (state != ST_OFF) {
-      gps_start(GPS_START_AUTO);
+    } else if (state == ST_ON || state == ST_PROFILE) {
+      gps_start(GPS_START_AUTO); /* not in the sync window after a flight: the power off follows */
     }
     return;
   }
@@ -1442,7 +1474,7 @@ static void update_maneuver(void)
     /* the measured tilt peak next to acos(1/n): "tilt -" while the pilot's axes were not learned */
     char tilt[12] = "-";
     if (maneuver.done_tilt_deg >= 0.0f) {
-      snprintf(tilt, sizeof(tilt), "%.0f", (double)maneuver.done_tilt_deg);
+      snprintf(tilt, sizeof(tilt), "%d", (int)lroundf(maneuver.done_tilt_deg));
     }
     float acos_deg = maneuver_bank_deg(maneuver.done_n_max);
     if (k == MANEUVER_WINGOVER) {
@@ -1861,6 +1893,7 @@ static void handle(const event_t *ev)
     check_faults();
     check_audio_adapter();
     check_config_update();
+    check_test_announce();
     break;
   case ST_ON:
     if (b && b->type == BUTTON_DOWN) {
@@ -1899,6 +1932,7 @@ static void handle(const event_t *ev)
     check_faults();
     check_audio_adapter();
     check_config_update();
+    check_test_announce();
     if (state == ST_ON) {
       check_auto_off(b);
     }
@@ -1913,7 +1947,9 @@ static void handle(const event_t *ev)
       shutdown();
       break;
     }
-    update_flight(); /* the track goes on while the melody plays */
+    if (in_flight) {
+      update_flight(); /* the track goes on while the melody plays; on the ground no takeoff starts into the power off */
+    }
     break;
   case ST_USB:
     if (b && b->type == BUTTON_DOWN) {

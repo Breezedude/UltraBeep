@@ -71,6 +71,9 @@ bool nmea_rate_due(nmea_rate_t *r, const gps_fix_t *fix, unsigned hz);
 
 /* "ddmm.mmmm" + "N"/"S"/"E"/"W" -> degrees * 1e7 (0 for an empty field). */
 int32_t nmea_coord_e7(const char *value, const char *hemisphere);
+/* A decimal field ("1305.3", "-46.4", "0.9"); 0 for an empty or malformed one. Plain digit scanning: no
+ * strtod, whose big-number path newlib shares between the tasks (fmt.h). */
+float nmea_parse_float(const char *value);
 /* "hhmmss.ss" -> milliseconds of the day; false if malformed. */
 bool nmea_time_of_day(const char *value, uint32_t *ms);
 

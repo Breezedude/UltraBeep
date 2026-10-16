@@ -2,6 +2,6 @@
 #define VERSION_H
 
 #define FW_NAME    "UltraBeep"
-#define FW_VERSION "0.55.0"
+#define FW_VERSION "0.56.0"
 
 #endif

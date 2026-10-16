@@ -104,7 +104,10 @@ size_t igc_format_header(char *out, size_t size, const igc_header_t *h)
   if (h->time_offset_min % 60 == 0) {
     put(out, size, &len, &ok, "HFTZNTIMEZONE:%d\r\n", h->time_offset_min / 60);
   } else {
-    put(out, size, &len, &ok, "HFTZNTIMEZONE:%.1f\r\n", (double)h->time_offset_min / 60.0);
+    /* hours with one decimal (5.5, -3.5); integer arithmetic, no float formatting (fmt.h) */
+    int m = h->time_offset_min < 0 ? -h->time_offset_min : h->time_offset_min;
+    int tenths = (m * 10 + 30) / 60;
+    put(out, size, &len, &ok, "HFTZNTIMEZONE:%s%d.%d\r\n", h->time_offset_min < 0 ? "-" : "", tenths / 10, tenths % 10);
   }
   put(out, size, &len, &ok, "HFPRSPRESSALTSENSOR:INFINEON,DPS310,7000\r\n");
   put(out, size, &len, &ok, "HFALGALTGPS:GEO\r\n");

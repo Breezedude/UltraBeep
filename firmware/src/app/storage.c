@@ -221,6 +221,15 @@ bool storage_remove(const char *path)
   return ok;
 }
 
+bool storage_exists(const char *path)
+{
+  FILINFO fi;
+  storage_lock();
+  bool ok = sd_mounted && f_stat(path, &fi) == FR_OK;
+  storage_unlock();
+  return ok;
+}
+
 static FIL stream_file;
 static bool stream_open, stream_ok;
 

@@ -5,14 +5,31 @@
  * source (audio.c: a read-ahead ring buffer filled from the SD card) and
  * decodes it slice by slice, as many samples as are asked for.
  */
-#include <math.h>
 #include <string.h>
 
 #include "qoa.h"
 
 #define QOA_MAGIC 0x716f6166U /* "qoaf" */
 
-static int dequant[16][8];
+/* round(round((s + 1)^2.75) * {0.75, -0.75, 2.5, -2.5, 4.5, -4.5, 7, -7}): the reference's table, no run-time powf. */
+static const int dequant[16][8] = {
+  {1, -1, 3, -3, 5, -5, 7, -7},
+  {5, -5, 18, -18, 32, -32, 49, -49},
+  {16, -16, 53, -53, 95, -95, 147, -147},
+  {34, -34, 113, -113, 203, -203, 315, -315},
+  {63, -63, 210, -210, 378, -378, 588, -588},
+  {104, -104, 345, -345, 621, -621, 966, -966},
+  {158, -158, 528, -528, 950, -950, 1477, -1477},
+  {228, -228, 760, -760, 1368, -1368, 2128, -2128},
+  {316, -316, 1053, -1053, 1895, -1895, 2947, -2947},
+  {422, -422, 1405, -1405, 2529, -2529, 3934, -3934},
+  {548, -548, 1828, -1828, 3290, -3290, 5117, -5117},
+  {696, -696, 2320, -2320, 4176, -4176, 6496, -6496},
+  {868, -868, 2893, -2893, 5207, -5207, 8099, -8099},
+  {1064, -1064, 3548, -3548, 6386, -6386, 9933, -9933},
+  {1286, -1286, 4288, -4288, 7718, -7718, 12005, -12005},
+  {1536, -1536, 5120, -5120, 9216, -9216, 14336, -14336},
+};
 
 static uint64_t read_u64(const uint8_t *p)
 {
@@ -28,24 +45,9 @@ static int clamp_s16(int v)
   return v < -32768 ? -32768 : (v > 32767 ? 32767 : v);
 }
 
-static void init_tables(void)
-{
-  static const float lut[8] = {0.75f, -0.75f, 2.5f, -2.5f, 4.5f, -4.5f, 7.0f, -7.0f};
-  if (dequant[15][0]) {
-    return;
-  }
-  for (int s = 0; s < 16; s++) {
-    float sf = roundf(powf((float)(s + 1), 2.75f));
-    for (int q = 0; q < 8; q++) {
-      dequant[s][q] = (int)roundf(sf * lut[q]);
-    }
-  }
-}
-
 bool qoa_open(qoa_stream_t *qs, qoa_source_t source, void *ctx)
 {
   uint8_t hdr[8];
-  init_tables();
   memset(qs, 0, sizeof(*qs));
   qs->source = source;
   qs->ctx = ctx;

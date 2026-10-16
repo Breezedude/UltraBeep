@@ -14,6 +14,7 @@
 #include "board.h"
 #include "config.h"
 #include "ff.h"
+#include "fmt.h"
 #include "gps.h"
 #include "log.h"
 #include "rtc_time.h"
@@ -692,8 +693,8 @@ static void send_lxwp0(const sensors_t *sn)
 {
   char alt[16] = "", vario[16] = "", heading[8] = "";
   if (sn->valid) {
-    snprintf(alt, sizeof(alt), "%.1f", (double)sn->alt_m);
-    snprintf(vario, sizeof(vario), "%.2f", (double)sn->vario_ms);
+    fmt_fixed(alt, sizeof(alt), sn->alt_m, 1);
+    fmt_fixed(vario, sizeof(vario), sn->vario_ms, 2);
   }
   gps_status_t g;
   gps_get(&g);

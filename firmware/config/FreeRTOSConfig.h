@@ -30,7 +30,10 @@ void fault_assert(const char *file, int line);
 /* Memory */
 #define configSUPPORT_STATIC_ALLOCATION         0
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
-#define configTOTAL_HEAP_SIZE                   ((size_t)(48 * 1024))
+/* Task stacks, queues, timers and mutexes, all created at start and never freed: about 24.5 KB (console `tasks`
+ * on 2026-10-16: 25 992 B before the timer and raw log stacks were trimmed). A short heap resets the device at
+ * start (vApplicationMallocFailedHook, "out of memory" in the next log). */
+#define configTOTAL_HEAP_SIZE                   ((size_t)(28 * 1024))
 #define configAPPLICATION_ALLOCATED_HEAP        0
 
 /* Hooks */
@@ -49,7 +52,7 @@ void fault_assert(const char *file, int line);
 #define configUSE_TIMERS                        1
 #define configTIMER_TASK_PRIORITY               (configMAX_PRIORITIES - 1)
 #define configTIMER_QUEUE_LENGTH                10
-#define configTIMER_TASK_STACK_DEPTH            384
+#define configTIMER_TASK_STACK_DEPTH            256 /* button, LED and health callbacks: 184 B in use (2026-10-16) */
 
 /* API */
 #define INCLUDE_vTaskPrioritySet                1

@@ -24,6 +24,8 @@
 #define IF_FOUND_MASTER_PATH   CONFIG_EXT_DIR "/if_found.txt"
 #define IF_FOUND_COPY_PATH     "0:/IF_FOUND_PLEASE_READ.txt"
 #define CONFIG_EXT_PATH        "0:/ultrabeep/config_ext.ultrabip"
+/* The firmware reads its configuration files into a buffer of this size; the file service refuses longer uploads. */
+#define CONFIG_FILE_MAX        (16 * 1024)
 #define PROFILE_MAX     10
 
 /* led_userled_int (stock numbering): the LED once the GPS has a fix, see system.c update_user_led. */

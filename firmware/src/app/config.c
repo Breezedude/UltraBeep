@@ -12,7 +12,8 @@
 #include "storage.h"
 #include "tap.h"
 
-#define FILE_BUF_SIZE (16 * 1024)
+#define FILE_BUF_SIZE CONFIG_FILE_MAX
+#define CONFIG_BAK_PATH CONFIG_EXT_DIR "/config.bak.ultrabip" /* the old stock file while a new one is adopted */
 
 static config_t active;
 static char file_buf[FILE_BUF_SIZE]; /* used by one task at a time (system task) */
@@ -495,12 +496,19 @@ static bool ext_write(const char *text, size_t len)
 
 bool config_adopt_new(void)
 {
-  /* BipLink uploads a new stock file under this name; the firmware takes it over, as the stock does */
-  if (storage_read_text(CONFIG_NEW_PATH, file_buf, sizeof(file_buf)) < 0) {
+  /* BipLink uploads a new stock file under this name; the firmware takes it over, as the stock does. The old
+   * file waits in our folder until the new one is in place: a power loss in between leaves one of them. */
+  if (!storage_exists(CONFIG_NEW_PATH)) {
     return false;
   }
-  storage_remove(CONFIG_PATH);
+  storage_mkdir(CONFIG_EXT_DIR);
+  bool had_old = storage_rename(CONFIG_PATH, CONFIG_BAK_PATH);
   bool ok = storage_rename(CONFIG_NEW_PATH, CONFIG_PATH);
+  if (ok) {
+    storage_remove(CONFIG_BAK_PATH);
+  } else if (had_old) {
+    storage_rename(CONFIG_BAK_PATH, CONFIG_PATH);
+  }
   log_printf("Config: %s adopted as %s - %s", CONFIG_NEW_PATH, CONFIG_PATH, ok ? "ok" : "rename FAILED");
   return ok;
 }
@@ -555,14 +563,14 @@ bool config_load(config_t *c)
   if (n >= 0) {
     ini_parse(file_buf, on_key, &pc);
   }
-  log_printf("Config %s: %s", CONFIG_PATH, n >= 0 ? "read" : "missing - defaults");
+  log_printf("Config %s: %s", CONFIG_PATH, n >= (int)sizeof(file_buf) - 1 ? "read, CUT at the buffer size" : n >= 0 ? "read" : "missing - defaults");
 
   pc.ext = true;
   int m = storage_read_text(CONFIG_EXT_PATH, file_buf, sizeof(file_buf));
   if (m >= 0) {
     ini_parse(file_buf, on_key, &pc);
   }
-  log_printf("Config %s: %s", CONFIG_EXT_PATH, m >= 0 ? "read" : "missing - defaults");
+  log_printf("Config %s: %s", CONFIG_EXT_PATH, m >= (int)sizeof(file_buf) - 1 ? "read, CUT at the buffer size" : m >= 0 ? "read" : "missing - defaults");
   if (!c->accel_cal_from_file && !factory_calibration(c)) {
     log_printf("Accelerometer: no calibration (no imu_acc* keys, no factory OTP data)");
   }

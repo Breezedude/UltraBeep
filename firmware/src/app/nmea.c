@@ -72,6 +72,29 @@ bool nmea_time_of_day(const char *value, uint32_t *ms)
   return true;
 }
 
+float nmea_parse_float(const char *value)
+{
+  const char *p = value;
+  bool neg = false;
+  if (*p == '-' || *p == '+') {
+    neg = *p == '-';
+    p++;
+  }
+  uint32_t mant = 0, scale = 1;
+  unsigned digits = 0; /* up to 9 significant digits: NMEA fields are shorter */
+  for (; *p >= '0' && *p <= '9' && digits < 9U; p++, digits++) {
+    mant = mant * 10U + (uint32_t)(*p - '0');
+  }
+  if (*p == '.') {
+    for (p++; *p >= '0' && *p <= '9' && digits < 9U; p++, digits++) {
+      mant = mant * 10U + (uint32_t)(*p - '0');
+      scale *= 10U;
+    }
+  }
+  float v = (float)mant / (float)scale;
+  return neg ? -v : v;
+}
+
 int32_t nmea_coord_e7(const char *value, const char *hemisphere)
 {
   const char *dot = strchr(value, '.');
@@ -114,12 +137,12 @@ void nmea_epoch_gga(nmea_epoch_t *e, char **f, int n)
   e->gga_tod_ms = tod;
   int quality = atoi(f[6]);
   p->sats = (uint8_t)atoi(f[7]);
-  p->hdop = (float)atof(f[8]);
+  p->hdop = nmea_parse_float(f[8]);
   if (quality > 0) {
     p->lat_e7 = nmea_coord_e7(f[2], f[3]);
     p->lon_e7 = nmea_coord_e7(f[4], f[5]);
-    p->alt_msl_m = (float)atof(f[9]);
-    p->geoid_sep_m = (float)atof(f[11]);
+    p->alt_msl_m = nmea_parse_float(f[9]);
+    p->geoid_sep_m = nmea_parse_float(f[11]);
     p->valid = true; /* confirmed by the RMC status */
   }
 }
@@ -157,8 +180,8 @@ bool nmea_epoch_rmc(nmea_epoch_t *e, char **f, int n, gps_fix_t *out)
     p->valid = false;
   }
   if (p->valid) {
-    p->speed_ms = (float)atof(f[7]) * KNOTS_TO_MS;
-    p->course_deg = (float)atof(f[8]);
+    p->speed_ms = nmea_parse_float(f[7]) * KNOTS_TO_MS;
+    p->course_deg = nmea_parse_float(f[8]);
     float c = p->course_deg * 0.017453293f;
     p->vel_n_ms = p->speed_ms * cosf(c);
     p->vel_e_ms = p->speed_ms * sinf(c);

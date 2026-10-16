@@ -9,7 +9,7 @@
 #include "board.h"
 #include "console_pack.h"
 
-#define OUT_SIZE 2048U /* power of two */
+#define OUT_SIZE 1024U /* power of two; the console task's answers wait for room, other lines are dropped and counted */
 #define IN_SIZE 128U   /* power of two; a console line has at most 95 characters */
 #define FLUSH_MS 40U   /* text without a line end goes out when nothing more came for this long */
 #define STALL_MS 1000U /* the console task gives up its output when nothing drained for this long */

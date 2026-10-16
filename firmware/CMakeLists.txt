@@ -33,6 +33,7 @@ set(APP_SOURCES
   src/app/dump.c
   src/app/crc32.c
   src/app/flight.c
+  src/app/fmt.c
   src/app/fusion.c
   src/app/gesture.c
   src/app/gps.c

@@ -10,10 +10,11 @@
 
 #include "ble_console.h"
 #include "board.h"
+#include "fmt.h"
 #include "uart_console.h"
 #include "usb_device.h"
 
-#define RING_SIZE (8 * 1024)
+#define RING_SIZE (4 * 1024) /* the start-up log is about 3 KB: a terminal connected late sees it */
 
 static SemaphoreHandle_t lock;
 static char ring[RING_SIZE];
@@ -45,13 +46,16 @@ static void give(void)
 
 static void ring_put(const char *s, size_t n)
 {
-  for (size_t i = 0; i < n; i++) {
-    ring[ring_head++] = s[i];
-    if (ring_head == RING_SIZE) {
-      ring_head = 0;
-      ring_wrapped = true;
-    }
+  size_t first = RING_SIZE - ring_head; /* n is at most one line, far below RING_SIZE */
+  if (n < first) {
+    memcpy(&ring[ring_head], s, n);
+    ring_head += n;
+    return;
   }
+  memcpy(&ring[ring_head], s, first);
+  memcpy(ring, s + first, n - first);
+  ring_head = n - first;
+  ring_wrapped = true;
 }
 
 void log_init(void)
@@ -66,7 +70,7 @@ void log_printf(const char *fmt, ...)
   int n = snprintf(line, sizeof(line), "[%5lu.%03lu] ", (unsigned long)(ms / 1000U), (unsigned long)(ms % 1000U));
   va_list ap;
   va_start(ap, fmt);
-  int m = vsnprintf(line + n, sizeof(line) - (size_t)n - 2U, fmt, ap);
+  int m = fmt_vsnprintf(line + n, sizeof(line) - (size_t)n - 2U, fmt, ap);
   va_end(ap);
   if (m < 0) {
     return;
@@ -103,7 +107,7 @@ void console_printf(const char *fmt, ...)
   char buf[256];
   va_list ap;
   va_start(ap, fmt);
-  int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  int n = fmt_vsnprintf(buf, sizeof(buf), fmt, ap);
   va_end(ap);
   if (n > 0) {
     console_write(buf, (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf) - 1U);

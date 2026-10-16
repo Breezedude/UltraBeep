@@ -28,7 +28,7 @@ static volatile bool cdc_tx_busy;
 static uint8_t cdc_rx_buf[CDC_DATA_FS_MAX_PACKET_SIZE];
 static uint8_t cdc_tx_buf[256];
 static volatile bool msc_ready;
-static volatile uint8_t rx_ring[64];
+static volatile uint8_t rx_ring[128]; /* a pasted console line (up to 95 characters) between two polls */
 static volatile uint8_t rx_head;
 static volatile uint8_t rx_tail;
 static volatile uint32_t msc_activity_tick;
@@ -193,8 +193,8 @@ void usb_cdc_write(const char *data, size_t len)
   while (len > 0 && usb_cdc_connected()) {
     uint32_t start = HAL_GetTick();
     while (cdc_tx_busy) {
-      if (HAL_GetTick() - start > 50) {
-        return; /* host not reading: drop */
+      if (HAL_GetTick() - start > 20) {
+        return; /* host not reading: drop (the caller holds the log lock meanwhile) */
       }
     }
     size_t chunk = len < sizeof(cdc_tx_buf) ? len : sizeof(cdc_tx_buf);

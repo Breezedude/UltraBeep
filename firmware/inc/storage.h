@@ -34,6 +34,7 @@ bool storage_voice_locate(const char *clip, char *out, size_t size);
 /* Creates a folder (true when it exists already). */
 bool storage_mkdir(const char *path);
 bool storage_remove(const char *path);
+bool storage_exists(const char *path);
 /* Streaming write of one file at a time (large files in chunks): open, chunks, close (false if any part failed). */
 bool storage_write_open(const char *path);
 bool storage_write_chunk(const void *data, size_t n);

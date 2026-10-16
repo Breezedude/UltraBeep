@@ -44,7 +44,8 @@ static sensors_t data;       /* written by the task, copied under a critical sec
 static float motion_max_g, motion_min_g = 99.0f, motion_rate_dps; /* since sensors_take_motion */
 static uint32_t motion_samples;
 static tilt_t tilt;          /* the pilot's tilt (tilt.c), from the power on */
-static volatile bool tilt_reset;
+static volatile bool new_session; /* sensors_start: the tilt and the altitude reference start over (a restart for
+                                     another barometer rate keeps both) */
 static volatile bool tilt_in_flight;
 static volatile float tilt_speed_ms;
 static float tilt_peak;      /* since sensors_take_tilt */
@@ -52,6 +53,7 @@ static bool tilt_gap;
 static uint32_t tilt_samples;
 static bool tilt_axes_logged;
 static float ref_offset;     /* GNSS-referenced altitude = standard altitude + ref_offset */
+static bool ref_valid;       /* ref_offset holds a GNSS reference (sensor task) */
 static volatile bool ref_request;
 static volatile float ref_alt;
 static volatile bool track_request;
@@ -153,15 +155,13 @@ static void sample_baro(void)
   rawlog_baro(&s, h, v);
   if (ref_request) {
     ref_offset = ref_alt - h;
+    ref_valid = true;
     ref_request = false;
     log_printf("Sensors: altitude referenced to GNSS %.1f m (offset %.1f m)", (double)ref_alt, (double)ref_offset);
-    taskENTER_CRITICAL();
-    data.referenced = true;
-    taskEXIT_CRITICAL();
   } else if (track_request) {
     /* weather drift: the barometric altitude slowly follows the GNSS altitude (a bike ride
      * showed 20 m in 90 min); far too slow to show in the climb rate */
-    if (data.referenced) {
+    if (ref_valid) {
       ref_offset += TRACK_ALPHA * (track_alt - h - ref_offset);
     }
     track_request = false;
@@ -172,6 +172,7 @@ static void sample_baro(void)
   data.alt_std_m = alt;
   data.alt_raw_m = alt + ref_offset;
   data.alt_m = h + ref_offset;
+  data.referenced = ref_valid;
   data.vario_ms = v;
   data.fused = fused;
   data.at_rest = fused && fusion.at_rest;
@@ -350,10 +351,14 @@ static void sensors_task(void *arg)
       on = false;
     }
     restart_request = false;
-    if (tilt_reset) {
-      tilt_reset = false; /* a new power on; a restart for another barometer rate keeps the learned axes */
+    if (new_session) {
+      /* a new power on; a restart for another barometer rate keeps the learned axes and the altitude
+       * reference (system.c references the altitude once per power on) */
+      new_session = false;
       tilt_init(&tilt);
       tilt_axes_logged = false;
+      ref_offset = 0.0f;
+      ref_valid = false;
     }
     if (!on) {
       taskENTER_CRITICAL();
@@ -362,7 +367,6 @@ static void sensors_task(void *arg)
       taskEXIT_CRITICAL();
       start_hw();
       on = true;
-      ref_offset = 0.0f;
       last_try = HAL_GetTick();
       last = xTaskGetTickCount();
     } else if ((!data.baro_ok || !data.imu_ok) && HAL_GetTick() - last_try >= RETRY_MS) {
@@ -384,7 +388,7 @@ void sensors_init(void)
 
 void sensors_start(void)
 {
-  tilt_reset = true;
+  new_session = true;
   want_on = true;
   xTaskNotifyGive(task);
 }

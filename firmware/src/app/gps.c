@@ -277,22 +277,6 @@ static int split_fields(char *s, char **f, int max)
   return n;
 }
 
-/* ddmm.mmmm + hemisphere -> 1e-7 degrees */
-static int32_t parse_coord(const char *v, const char *hemi)
-{
-  if (!v[0]) {
-    return 0;
-  }
-  double raw = atof(v);
-  int deg = (int)(raw / 100.0);
-  double minutes = raw - deg * 100.0;
-  double d = deg + minutes / 60.0;
-  if (hemi[0] == 'S' || hemi[0] == 'W') {
-    d = -d;
-  }
-  return (int32_t)(d * 1e7);
-}
-
 static int talker_index(const char *t)
 {
   for (int i = 0; i < 6; i++) {
@@ -436,11 +420,11 @@ static void on_gga(char **f, int n)
   gsa_best = 0; /* a new epoch begins with GGA */
   st.quality = (uint8_t)atoi(f[6]);
   st.sats_used = (uint8_t)atoi(f[7]);
-  st.hdop = (float)atof(f[8]);
+  st.hdop = nmea_parse_float(f[8]);
   if (st.quality > 0) {
-    st.lat_e7 = parse_coord(f[2], f[3]);
-    st.lon_e7 = parse_coord(f[4], f[5]);
-    st.alt_m = (float)atof(f[9]);
+    st.lat_e7 = nmea_coord_e7(f[2], f[3]);
+    st.lon_e7 = nmea_coord_e7(f[4], f[5]);
+    st.alt_m = nmea_parse_float(f[9]);
   }
 }
 
@@ -469,8 +453,8 @@ static void on_rmc(char **f, int n)
     }
   }
   if (f[2][0] == 'A') {
-    st.speed_kmh = (float)(atof(f[7]) * 1.852);
-    st.course_deg = (float)atof(f[8]);
+    st.speed_kmh = nmea_parse_float(f[7]) * 1.852f;
+    st.course_deg = nmea_parse_float(f[8]);
   }
 }
 

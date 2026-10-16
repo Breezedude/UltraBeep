@@ -9,6 +9,7 @@
 
 #include "board.h"
 #include "ff.h"
+#include "fmt.h"
 #include "icm42605.h"
 #include "log.h"
 #include "rtc_time.h"
@@ -17,7 +18,10 @@
 #include "version.h"
 
 #define DIR_PATH      "0:/raw"
-#define RING_SIZE     24576U /* about 4 s at 6.5 kB/s (barometer at 100 Hz, GPS at 10 Hz; more at 5 Hz) */
+/* A power of two: about 2.5 s at 6.5 kB/s (barometer at 100 Hz, GNSS at 5 Hz); the writer takes 4 KB every
+ * 250 ms, a card stall longer than the ring drops records, which the closing log line counts. */
+#define RING_SIZE     16384U
+#define RING_MASK     (RING_SIZE - 1U)
 #define WRITE_CHUNK   4096U
 #define WRITE_MS      250U
 #define SYNC_MS       2000U  /* data lost at a power failure: at most this */
@@ -44,18 +48,19 @@ static void put(uint8_t type, const void *payload, uint32_t len)
     return;
   }
   const uint8_t *p = (const uint8_t *)payload;
-  taskENTER_CRITICAL();
+  taskENTER_CRITICAL(); /* several producer tasks; a few microseconds */
   uint32_t used = head - tail;
   if (used + len + 2U > RING_SIZE) {
     dropped++;
   } else {
     uint32_t h = head;
-    ring[h++ % RING_SIZE] = type;
-    ring[h++ % RING_SIZE] = (uint8_t)len;
-    for (uint32_t i = 0; i < len; i++) {
-      ring[h++ % RING_SIZE] = p[i];
-    }
-    head = h;
+    ring[h++ & RING_MASK] = type;
+    ring[h++ & RING_MASK] = (uint8_t)len;
+    uint32_t at = h & RING_MASK;
+    uint32_t first = RING_SIZE - at < len ? RING_SIZE - at : len; /* up to the end of the ring, the rest in front */
+    memcpy(&ring[at], p, first);
+    memcpy(ring, p + first, len - first);
+    head = h + len;
   }
   taskEXIT_CRITICAL();
 }
@@ -160,7 +165,7 @@ void rawlog_event(const char *fmt, ...)
   char text[100];
   va_list ap;
   va_start(ap, fmt);
-  vsnprintf(text, sizeof(text), fmt, ap);
+  fmt_vsnprintf(text, sizeof(text), fmt, ap);
   va_end(ap);
   put_text(RAWLOG_EVENT, text);
 }
@@ -174,7 +179,7 @@ static void write_out(bool all)
     if (used == 0U || (!all && used < WRITE_CHUNK)) {
       break;
     }
-    uint32_t start = tail % RING_SIZE;
+    uint32_t start = tail & RING_MASK;
     uint32_t n = used > WRITE_CHUNK ? WRITE_CHUNK : used;
     if (n > RING_SIZE - start) {
       n = RING_SIZE - start; /* up to the end of the ring, the rest in the next round */
@@ -233,7 +238,7 @@ static uint32_t next_number(void)
 
 void rawlog_init(void)
 {
-  xTaskCreate(writer_task, "rawlog", 512, NULL, 2, &task);
+  xTaskCreate(writer_task, "rawlog", 256, NULL, 2, &task); /* 300 B in use (console `tasks`, 2026-10-16) */
 }
 
 bool rawlog_start(void)

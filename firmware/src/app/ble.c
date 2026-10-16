@@ -44,6 +44,7 @@
 #include "config.h"
 #include "crc32.h"
 #include "ff.h"
+#include "fmt.h"
 #include "health.h"
 #include "identity.h"
 #include "remote.h"
@@ -427,7 +428,7 @@ static void status_send(const char *fmt, ...)
   char line[VALUE_MAX + 2];
   va_list ap;
   va_start(ap, fmt);
-  int n = vsnprintf(line, sizeof(line) - 1U, fmt, ap);
+  int n = fmt_vsnprintf(line, sizeof(line) - 1U, fmt, ap);
   va_end(ap);
   if (n < 0) {
     return;
@@ -688,7 +689,7 @@ static bool handle_test_command(const char *cmd)
   } else if (strncmp(cmd, "TONES ", 6) == 0 && vario_tones_parse(cmd + 6, &t)) {
     system_test_tones(&t);
   } else if (strncmp(cmd, "ANNOUNCE ", 9) == 0) {
-    char trigger[16], items[160];
+    char trigger[16], items[160] = "";
     if (sscanf(cmd + 9, "%15s %159s", trigger, items) < 1) {
       status_send("ERR arguments");
       return true;
@@ -931,6 +932,8 @@ static void handle_command(uint16_t handle, const uint8_t *data, uint16_t len)
       int got = storage_read_text(xf_path, xfer_buf, sizeof(xfer_buf));
       if (got < 0) {
         status_send("ERR not found");
+      } else if ((uint32_t)got >= XFER_MAX) {
+        status_send("ERR size"); /* longer than the buffer: never a cut file with a matching CRC */
       } else {
         xf_size = (uint32_t)got;
         xf_pos = 0;
@@ -986,8 +989,8 @@ static void handle_command(uint16_t handle, const uint8_t *data, uint16_t len)
       }
     } else if (!allowed_file(name)) {
       status_send("ERR not allowed");
-    } else if (size == 0 || size > XFER_MAX) {
-      status_send("ERR size");
+    } else if (size == 0 || size > XFER_MAX || (!clip_file(name) && size >= CONFIG_FILE_MAX)) {
+      status_send("ERR size"); /* the firmware reads its configuration files into a CONFIG_FILE_MAX buffer */
     } else {
       file_path(xf_path, sizeof(xf_path), name);
       xf_size = (uint32_t)size;

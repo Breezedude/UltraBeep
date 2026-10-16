@@ -63,7 +63,7 @@ static bool move_file(const char *from, const char *to)
 
 static bool validate_image(const char *path)
 {
-  static uint8_t buf[2048];
+  uint8_t buf[512]; /* one sector: FatFs reads straight into it */
   FIL f;
   UINT br;
   bool ok = false;

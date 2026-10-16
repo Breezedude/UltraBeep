@@ -12,8 +12,8 @@
 ENTRY(Reset_Handler)
 
 _estack = 0x20030000;
-_Min_Heap_Size  = 0x800;
-_Min_Stack_Size = 0x1000;
+_Min_Heap_Size  = 0x400;  /* newlib's heap: printf's float formatting (a few hundred bytes), nothing else */
+_Min_Stack_Size = 0x1000; /* main stack: interrupts (the USB mass storage path); console `tasks` shows its reserve */
 
 MEMORY
 {
