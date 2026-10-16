@@ -122,6 +122,19 @@ void rawlog_nmea(const char *line)
   put_text(RAWLOG_NMEA, line);
 }
 
+void rawlog_settings(const char *text)
+{
+  uint8_t buf[4 + 240];
+  uint32_t t = HAL_GetTick();
+  size_t n = strlen(text);
+  if (n > sizeof(buf) - 4) {
+    n = sizeof(buf) - 4;
+  }
+  memcpy(buf, &t, 4);
+  memcpy(buf + 4, text, n);
+  put(RAWLOG_SETTINGS, buf, 4U + n);
+}
+
 typedef struct __attribute__((packed)) {
   uint32_t t_ms;
   float offset[3];

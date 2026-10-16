@@ -872,6 +872,14 @@ static void handle_command(uint16_t handle, const uint8_t *data, uint16_t len)
   } else if (strcmp(cmd, "CONSOLE on") == 0 || strcmp(cmd, "CONSOLE off") == 0) {
     ble_console_enable(strcmp(cmd + 8, "on") == 0);
     status_send("OK");
+  } else if (strcmp(cmd, "RELOAD") == 0) {
+    /* "Apply now" after a save: the new files at once, on the ground */
+    if (!system_test_allowed()) {
+      status_send("ERR %s", system_in_flight() ? "in flight" : "not switched on");
+    } else {
+      system_request_config_reload();
+      status_send("OK");
+    }
   } else if (strcmp(cmd, "LIVE") == 0) {
     send_live();
   } else if (strcmp(cmd, "INFO") == 0) {

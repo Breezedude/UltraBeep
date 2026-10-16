@@ -6,9 +6,10 @@
  *   imu:  t, raw (6 int16 per sample: accel x y z, gyro x y z)
  *   nmea, events: [{t, text}]
  *   calib: [{t, offset[3] m/s², scale[3]}] accelerometer calibration in use
+ *   settings: [{t, group, values: {key: value}, text}] the settings the device wrote (firmware 0.51)
  */
 
-export const RECORD = { HEADER: 0, BARO: 1, IMU: 2, NMEA: 3, EVENT: 4, CALIB: 5 };
+export const RECORD = { HEADER: 0, BARO: 1, IMU: 2, NMEA: 3, EVENT: 4, CALIB: 5, SETTINGS: 6 };
 export const G0 = 9.80665;
 
 const HEADER_SIZE = 84;
@@ -83,6 +84,7 @@ export function parseRawLog(input, name = "") {
   const nmea = [];
   const events = [];
   const calib = [];
+  const settings = [];
   let header = null;
 
   // pass 2: fill
@@ -123,6 +125,17 @@ export function parseRawLog(input, name = "") {
         const scale = [0, 1, 2].map((k) => dv.getFloat32(o + 16 + 4 * k, true));
         calib.push({ t: dv.getUint32(o, true), offset, scale });
       } else stats.badLength++;
+    } else if (type === RECORD.SETTINGS) {
+      if (n >= 4) {
+        const text = decoder.decode(bytes.subarray(o + 4, o + n));
+        const [group, ...pairs] = text.split(" ");
+        const values = {};
+        for (const p of pairs) {
+          const i = p.indexOf("=");
+          if (i > 0) values[p.slice(0, i)] = p.slice(i + 1);
+        }
+        settings.push({ t: dv.getUint32(o, true), group, values, text });
+      } else stats.badLength++;
     } else if (type === RECORD.NMEA || type === RECORD.EVENT) {
       if (n >= 4) {
         const rec = { t: dv.getUint32(o, true), text: decoder.decode(bytes.subarray(o + 4, o + n)) };
@@ -150,7 +163,7 @@ export function parseRawLog(input, name = "") {
   if (imu.n) tEnd = Math.max(tEnd, imu.t[imu.n - 1]);
   for (const r of nmea) if (r.t > tEnd) tEnd = r.t;
 
-  return { name, size: len, header, baro, imu, nmea, events, calib, stats, t0, tEnd };
+  return { name, size: len, header, baro, imu, nmea, events, calib, settings, stats, t0, tEnd };
 }
 
 /*

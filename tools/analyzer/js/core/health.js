@@ -54,6 +54,7 @@ export function analyzeHealth(ctx) {
     firmware: h.firmware, format: h.format, durationS: (log.tEnd - log.t0) / 1000, sizeBytes: log.size,
     records: st.records, unknown: st.unknown, badLength: st.badLength, truncatedBytes: st.truncatedBytes,
     clockSet: !!h.unixTime,
+    settings: log.settings || [],
   };
   if (st.unknown || st.badLength) add("warn", "log", "Damaged records", `${st.unknown} of unknown type, ${st.badLength} with a wrong length`);
   if (st.truncatedBytes) add("info", "log", "Cut-off end", `${st.truncatedBytes} bytes at the end (power off while writing)`);

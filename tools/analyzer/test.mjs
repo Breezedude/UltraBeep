@@ -164,7 +164,7 @@ check(mF.handlingCount === 1, "handling event counted");
 
 /* ---- the manoeuvre modes of the fusion: a spiral, handling, and the g reference after a bad first sample ---- */
 /* Raw log from functions of the time: imu(t) -> {a: [m/s²], w: [rad/s]}, height(t) -> m. */
-function synthRawLog(seconds, imu, height) {
+function synthRawLog(seconds, imu, height, settings = []) {
   const parts = [];
   const rec = (type, payload) => parts.push(Uint8Array.of(type, payload.length), payload);
   const hdr = new Uint8Array(84);
@@ -174,6 +174,12 @@ function synthRawLog(seconds, imu, height) {
   hv.setFloat32(8, 4096, true); hv.setFloat32(12, 16.4, true);
   hv.setUint32(64, T0, true);
   rec(0, hdr);
+  for (const text of settings) {
+    const p = new Uint8Array(4 + text.length);
+    new DataView(p.buffer).setUint32(0, T0, true);
+    p.set(new TextEncoder().encode(text), 4);
+    rec(6, p);
+  }
   const list = [];
   for (let k = 0; k < seconds * 100; k++) list.push({ t: T0 + k * 10, imu: true });
   for (let k = 0; k < seconds * 32; k++) list.push({ t: T0 + Math.round(k * 31.25), imu: false });
@@ -607,6 +613,15 @@ check(!varioTone(DEFAULT_CURVE, 0.05).sound && varioTone(DEFAULT_CURVE, -3).soun
   // without turns the side cannot be found: no attitude (the map then estimates the bank from the track)
   const straight = buildContext(synthRawLog(80, (t) => ({ a: Md.map((v) => v * G), w: [0, 0, 0] }), () => 1000));
   check(pilotAttitude(straight, { takeoffT: 20, landingT: 80 }) === null, "no attitude without turns");
+}
+
+/* ---- settings records (type 6, firmware 0.51) ---- */
+{
+  const log = synthRawLog(2, () => ({ a: [0, 0, 9.80665], w: [0, 0, 0] }), () => 500,
+    ["device serial=0080E12600A74360 id=UB4360 firmware=0.51.0", "vario vario_liftstart_int=10 vario_liftysound_bool=false"]);
+  check(log.settings.length === 2 && log.settings[0].group === "device" && log.settings[0].values.id === "UB4360",
+    "settings: group and values parsed");
+  check(log.settings[1].values.vario_liftysound_bool === "false" && log.stats.unknown === 0, "settings: not counted as unknown records");
 }
 
 console.log(`${pass} passed, ${fail} failed`);

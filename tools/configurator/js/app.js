@@ -2120,8 +2120,42 @@ function download(name, text) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+/* Settings the device reads only at power on: what a change of them still needs after "Apply now". */
+function powerOnOnlyChanges() {
+  const was = { stock: new IniDoc(state.stock.original), ext: new IniDoc(state.ext.original) };
+  const differs = (doc, section, key) => was[doc].get(section, key) !== state[doc].get(section, key);
+  const out = [];
+  const pilots = () => { for (let n = 1; n <= PROFILE_MAX; n++) if (differs(n <= STOCK_PROFILES ? "stock" : "ext", section(n), "identity_pilotname_string")) return true; return false; };
+  if (differs("ext", "global", "system_blename_string") || (!state.ext.get("global", "system_blename_string") && pilots())) out.push("the Bluetooth name");
+  for (let n = 1; n <= PROFILE_MAX; n++) {
+    if (differs(n <= STOCK_PROFILES ? "stock" : "ext", section(n), "bluetooth_remoteenable_bool")) { out.push("the remote control"); break; }
+  }
+  if (differs("ext", "global", "system_rawlog_bool")) out.push("the raw log");
+  return out;
+}
+
+/* "Apply now" in the message after a save over Bluetooth: the device reloads its configuration at once. */
+function applyNowLink(client, later) {
+  const a = el("a", { href: "#", class: "msg-action", onclick: async (e) => {
+    e.preventDefault();
+    a.textContent = "Applying …";
+    try {
+      await client.reloadConfig();
+      const list = later.join(", ").replace(/, ([^,]*)$/, " and $1");
+      const rest = later.length ? ` ${list.charAt(0).toUpperCase()}${list.slice(1)} ${later.length > 1 ? "follow" : "follows"} at the next power on.` : "";
+      setMessage(`Applied: the device reloaded its configuration.${rest}`);
+    } catch (err) {
+      setMessage(/unknown command/.test(err.message) ? "This firmware takes new settings at the next power on (Apply now needs 0.49)."
+        : /in flight/.test(err.message) ? "Not in flight: the settings apply after the landing at the next power on, or with Apply now on the ground."
+          : `Apply now: ${err.message}`, true);
+    }
+  } }, "Apply now");
+  return a;
+}
+
 async function save() {
   const changed = [["config.ultrabip", state.stock], ["config_ext.ultrabip", state.ext]].filter(([, d]) => d.changed);
+  const later = state.stock && state.ext && changed.length ? powerOnOnlyChanges() : [];
   try {
     for (const [name, doc] of changed) {
       const src = state.source;
@@ -2165,6 +2199,10 @@ async function save() {
       ? `Downloaded: ${changed.map(([n]) => n).join(", ")}. Copy config.ultrabip to the top folder of the SD card ` +
         "and config_ext.ultrabip into its folder ultrabeep."
       : `Saved: ${changed.map(([n]) => n).join(", ")}. New settings apply at the next power on.`) + clips);
+    const configSaved = changed.some(([n]) => n === "config.ultrabip" || n === "config_ext.ultrabip");
+    if (configSaved && state.source.kind === "ble" && state.source.client.connected) {
+      $("message").append(" ", applyNowLink(state.source.client, later));
+    }
   } catch (e) {
     setMessage(`Saving failed: ${e.message}`, true);
   }

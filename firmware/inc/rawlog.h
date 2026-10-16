@@ -20,6 +20,7 @@ typedef enum {
   RAWLOG_NMEA = 3,
   RAWLOG_EVENT = 4,
   RAWLOG_CALIB = 5, /* accelerometer calibration in use (after the header and on every change) */
+  RAWLOG_SETTINGS = 6, /* the settings a log needs to be read, as text (system.c log_*_settings) */
 } rawlog_type_t;
 
 void rawlog_init(void);
@@ -33,6 +34,8 @@ void rawlog_imu(const int16_t raw[6]);
 void rawlog_nmea(const char *line);
 void rawlog_event(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void rawlog_calibration(const float offset[3], const float scale[3]);
+/* One settings record: a group word, then "key=value" pairs (up to 240 characters). */
+void rawlog_settings(const char *text);
 
 typedef struct {
   bool active;

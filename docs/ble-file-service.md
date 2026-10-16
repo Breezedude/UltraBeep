@@ -40,6 +40,7 @@ the AUTH. Firmware before 0.45 answers `ERR unknown command` and needs no author
 |---|---|---|
 | `INFO` | `INFO name=<firmware> version=<v> profile=<n> state=<state> mtu=<mtu> interval=<ms> phy=<1\|2> links=<n> auth=<0\|1>` | `interval` is the connection interval, `phy` the radio bit rate in Mbit/s, `links` the connected centrals, `auth` whether this link is authorised |
 | `AUTH <secret>` | `OK`; `PENDING`, later `AUTH ok` or `AUTH denied`; `ERR busy`; `ERR secret` | see Authorisation above |
+| `RELOAD` | `OK`; `ERR in flight`; `ERR not switched on` | the device takes the saved configuration at once, as after an upload from the BipLink app (0.49): it says "loading configuration"; sensors, GNSS and the voice pack restart only when their settings changed. The Bluetooth name, the remote control and the raw log follow at the next power on. Only on the ground |
 | `GET <file>` | `OK <size>`, then the file on Data, then `DONE <crc>`; or `ERR <reason>` | |
 | `LIST <folder>` | like `GET`: the listing, one line `<name> <size>` per file | `tracks_IGC` or `tracks_KML`, with the files of the year folders as `2026/<name>`; an empty listing if the folder does not exist yet |
 | `GET <folder>/<file>` | like `GET` | a track file of any size, read from the card while it is sent |
