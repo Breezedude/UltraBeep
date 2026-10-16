@@ -37,15 +37,17 @@ server {
         proxy_send_timeout 120s;
     }
 
-    # Recordings for own voices: up to 20 s of 16-bit WAV (about 1 MB).
-    location = /v1/voices/own {
+    # Uploads: recordings for own voices (up to 20 s of 16-bit WAV, about 1 MB) and the 1 MB parts
+    # of shared packs; the pack downloads take this way too.
+    location ~ ^/v1/(voices/own|packs/[a-z0-9]+/file)$ {
         client_max_body_size 2m;
         proxy_pass http://127.0.0.1:5055;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 30s;
+        proxy_read_timeout 60s;
+        proxy_buffering off;
     }
 }
 

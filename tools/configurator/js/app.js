@@ -12,7 +12,7 @@ const state = {
   profile: 1,
   mode: "dev", /* view mode: basic, expert or dev (header selector) */
   navEdit: false, /* the profile list in its edit mode: reorder by drag, delete */
-  voiceLineFor: null, /* a profile number: the Voice view opens with that profile's voice line in the editor */
+  voiceLineFor: null, /* a profile number: Custom voicepack opens with that profile's voice line in the editor */
   ifFound: { text: "", saved: "" }, /* the owner's note for a finder (ultrabeep/if_found.txt) */
   clipMap: new Map(), /* profile number now -> number its custom voice line has on the device (reorder, delete) */
   clipDeleted: new Set(), /* device numbers whose profile was deleted: their voice line goes at the next save */
@@ -540,12 +540,18 @@ function renderNav() {
     views.push(["status", "Status and tests"], ["console", "Console"], ["tracks", "Tracks"], ["firmware", "Firmware"]);
   }
   views.push(["files", "Files"]);
+  const navButton = (view, label, sub) => el("button", {
+    class: "navitem" + (sub ? " sub" : "") + (state.view === view ? " active" : ""),
+    "aria-current": state.view === view ? "page" : null,
+    onclick: () => { state.view = view; render(); },
+  }, sub ? null : icon(view), el("span", { class: "navtext" }, label));
   for (const [view, label] of views.filter(([v]) => levelOk(VIEW_LEVELS[v]))) {
-    nav.append(el("button", {
-      class: "navitem" + (state.view === view ? " active" : ""),
-      "aria-current": state.view === view ? "page" : null,
-      onclick: () => { state.view = view; render(); },
-    }, icon(view), el("span", { class: "navtext" }, label)));
+    nav.append(navButton(view, label));
+    /* Voice: the packs; below it the pages that make voices and packs */
+    if (view === "voice") {
+      nav.append(el("div", { class: "subtree" }, navButton("speaker", "Custom speaker", true),
+        navButton("voicepack", "Custom voicepack", true)));
+    }
   }
 }
 
@@ -1845,7 +1851,9 @@ function render() {
   else if (state.view === "files") renderFiles();
   else if (state.view === "tracks") renderTracks();
   else if (state.view === "firmware") renderFirmware();
-  else if (state.view === "voice") renderVoice();
+  else if (state.view === "voice") renderVoice();          /* js/voicepacks.js */
+  else if (state.view === "speaker") renderSpeaker();      /* js/speaker.js */
+  else if (state.view === "voicepack") renderVoicepack();  /* js/voicegen.js */
   else renderProfile(profileExists(state.profile) ? state.profile : 1);
   refreshStatus();
 }

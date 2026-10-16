@@ -4,17 +4,28 @@ Runs at home next to the models and connects OUT to the relay (wss://voice.breez
 shared secret), so the home network needs no open port. The relay sends jobs over that socket; the
 worker answers from its disk cache or synthesizes with Chatterbox in a process pool:
 
-  relay -> worker  {"type": "speak", "id", "voice": "cb:de-DE-florian", "text"}
+  relay -> worker  {"type": "speak", "id", "voice": "cb:de-DE-florian", "text", "settings"?}
   worker -> relay  {"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms"}
   relay -> worker  {"type": "clone", "id", "wav": base64, "consent": true}
   worker -> relay  {"type": "cloned", "id", "voice_id", "seconds"}
   relay -> worker  {"type": "forget", "id", "voice_id"}
   worker -> relay  {"type": "forgot", "id", "deleted"}
-  worker -> relay  {"type": "error", "id", "status", "message"}   (400 bad input, 404 no such voice, 500)
+  relay -> worker  {"type": "publish", "id", "voice_id", "name", "locale", "gender", "settings", "audio",
+                    "consent": true}
+  worker -> relay  {"type": "published", "id", "voice"}
+  relay -> worker  {"type": "pack_put", "id", "pack", "part", "parts", "data": base64}
+  worker -> relay  {"type": "pack_stored", "id", "done", "size", "sha256"}
+  relay -> worker  {"type": "pack_read", "id", "pack", "offset", "length"}
+  worker -> relay  {"type": "pack_data", "id", "data": base64, "size"}
+  relay -> worker  {"type": "pack_delete", "id", "pack"}
+  worker -> relay  {"type": "pack_deleted", "id", "deleted"}
+  worker -> relay  {"type": "error", "id", "status", "message"}   (400 bad input, 404 not found, 409, 500)
   worker -> relay  {"type": "hello" | "voices", "voices": [...], "slots", "seconds", "languages"}
 
-When idle, it renders the voice pack texts of every public voice into the cache (PRERENDER=1), so a
-pack in those voices comes back at once. Settings come from the environment (worker.env.example).
+"settings" of a speak are Chatterbox settings to try (the configurator's Custom speaker page); they
+override the voice's own and are part of the cache key. When idle, the worker renders the voice pack
+texts of every public voice into the cache (PRERENDER=1), so a pack in those voices comes back at
+once. Settings come from the environment (worker.env.example).
 """
 import asyncio
 import base64
@@ -33,8 +44,9 @@ from websockets.asyncio.client import connect
 
 import engine
 from cache import Cache
+from packs import PackError, Packs
 from textnorm import LANGUAGES
-from voices import UnknownVoice, Voices
+from voices import UnknownVoice, VoiceRefused, Voices, clean_settings
 
 log = logging.getLogger("tts-worker")
 MAX_TEXT = 300
@@ -54,6 +66,8 @@ class Worker:
                              os.environ.get("PRIVATE_DIR", "/var/lib/tts/private"))
         self.cache = Cache(os.environ.get("CACHE_DIR", "/var/lib/tts/cache/clips"),
                            env("CACHE_MAX_MB", 4000) * 1024 * 1024, engine.TAG)
+        self.packs = Packs(os.environ.get("PACK_DIR", "/var/lib/tts/packs"), env("PACK_MAX_MB", 40) * 2**20,
+                           env("PACK_STORAGE_MB", 5000) * 2**20)
         self.catalogue = self.load_catalogue(os.environ.get("CATALOGUE", ""))
         self.prerender = env("PRERENDER", 1) == 1 and bool(self.catalogue)
         # one model per process: Chatterbox swaps parts of itself per clip and is not thread-safe
@@ -103,12 +117,14 @@ class Worker:
             voice = self.voices.resolve(msg.get("voice"))
         except UnknownVoice as e:
             return await self.send({"type": "error", "id": msg["id"], "status": 404, "message": str(e)})
+        trial = clean_settings(msg.get("settings"))  # settings tried in the configurator
         t0 = self.last_user = time.monotonic()
-        data = self.cache.get(voice, text)
+        data = self.cache.get(voice, text, trial)
         cached = data is not None
         if not cached:
-            data, info = await self.run_job(engine.job_speak, str(voice.conds), voice.language, text, voice.settings)
-            self.cache.put(voice, text, data)
+            data, info = await self.run_job(engine.job_speak, str(voice.conds), voice.language, text,
+                                            {**voice.settings, **trial})
+            self.cache.put(voice, text, data, trial)
             self.seconds = 0.8 * self.seconds + 0.2 * info["ms"] / 1000
             if info["attempts"] > 1:
                 log.info("%s %r: %d attempts (ran on past its text)", voice.name, text, info["attempts"])
@@ -148,10 +164,50 @@ class Worker:
         log.info("own voice deleted" if deleted else "own voice to delete did not exist")
         await self.send({"type": "forgot", "id": msg["id"], "deleted": deleted})
 
+    async def publish(self, msg):
+        """An own voice becomes a template for everyone (its speaker ticked the consent)."""
+        if msg.get("consent") is not True:
+            return await self.send({"type": "error", "id": msg["id"], "status": 400, "message": "consent missing"})
+        try:
+            name = await asyncio.to_thread(self.voices.publish, msg.get("voice_id"), msg.get("name"), msg.get("locale"),
+                                           msg.get("gender"), msg.get("settings"), msg.get("audio"))
+        except VoiceRefused as e:
+            return await self.send({"type": "error", "id": msg["id"], "status": 409, "message": str(e)})
+        except UnknownVoice as e:
+            return await self.send({"type": "error", "id": msg["id"], "status": 404, "message": str(e)})
+        log.info("template published: %s", name)
+        await self.send(self.hello("voices"))  # listed at once, before the answer
+        await self.send({"type": "published", "id": msg["id"], "voice": name})
+
+    async def pack_put(self, msg):
+        data = base64.b64decode(msg.get("data", ""), validate=True)
+        done = await asyncio.to_thread(self.packs.put_part, msg.get("pack"), int(msg.get("part", -1)),
+                                       int(msg.get("parts", 0)), data)
+        reply = {"type": "pack_stored", "id": msg["id"], "done": done is not None}
+        if done:
+            reply["size"], reply["sha256"] = done
+            log.info("pack %s stored: %d bytes", msg["pack"], done[0])
+        await self.send(reply)
+
+    async def pack_read(self, msg):
+        data, size = await asyncio.to_thread(self.packs.read, msg.get("pack"), int(msg.get("offset", 0)),
+                                             int(msg.get("length", 2**20)))
+        await self.send({"type": "pack_data", "id": msg["id"], "size": size, "data": base64.b64encode(data).decode()})
+
+    async def pack_delete(self, msg):
+        deleted = await asyncio.to_thread(self.packs.delete, msg.get("pack"))
+        log.info("pack %s %s", msg.get("pack"), "deleted" if deleted else "to delete not found")
+        await self.send({"type": "pack_deleted", "id": msg["id"], "deleted": deleted})
+
     async def handle(self, msg):
-        kinds = {"speak": self.speak, "clone": self.clone, "forget": self.forget}
+        kinds = {"speak": self.speak, "clone": self.clone, "forget": self.forget, "publish": self.publish,
+                 "pack_put": self.pack_put, "pack_read": self.pack_read, "pack_delete": self.pack_delete}
         try:
             await kinds[msg["type"]](msg)
+        except PackError as e:
+            await self.send({"type": "error", "id": msg.get("id"), "status": e.status, "message": str(e)})
+        except (ValueError, KeyError) as e:
+            await self.send({"type": "error", "id": msg.get("id"), "status": 400, "message": f"bad request: {e}"})
         except Exception as e:
             log.exception("%s failed", msg.get("type"))
             await self.send({"type": "error", "id": msg.get("id"), "status": 500, "message": f"worker: {type(e).__name__}"})

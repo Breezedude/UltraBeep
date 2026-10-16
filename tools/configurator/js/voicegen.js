@@ -1,12 +1,15 @@
 "use strict";
 
 /*
- * The Voice view: the voice pack of the device (the same key as System → Language and time; the
- * texts and the voices follow it), the generator settings (voice, pitch, rate, band-pass - heard
- * live on the sample), the clip to generate (any clip of the pack or an own one; as a single file
- * in voices/custom it replaces the pack's clip of that name), the whole pack generated in the
- * browser and packed into a .ubpack image (js/fatimage.js), the clips on the device (play, edit,
- * delete) and the catalogue of the pack's clips (js/voicepack.js) with play and edit.
+ * The Custom voicepack view (Voice → Custom voicepack): the voice pack of the device (the same key as
+ * System → Language and time; the texts and the voices follow it), where the pack starts from (the
+ * catalogue's texts, or a shared pack: its voice, settings and changed texts), the generator settings
+ * (voice, pitch, rate, band-pass - heard live on the sample), the clip to generate (any clip of the
+ * pack or an own one; as a single file in voices/custom it replaces the pack's clip of that name; a
+ * text changed there stays with the pack, e.g. "Haik änd Flai" where a voice misreads "Hike and Fly"),
+ * the whole pack generated in the browser and packed into a .ubpack image (js/fatimage.js), shared
+ * with everyone if wanted, the clips on the device (play, edit, delete) and the catalogue of the
+ * pack's clips (js/voicepack.js) with play and edit.
  */
 
 const genClips = new Map(); /* clip name -> entry {raw, vol, maxS, text, bytes...}, generated in this session */
@@ -21,7 +24,7 @@ function groundSpeakerVolume() {
   return state.ext.get("global", "volume_speakerground_int") || "50";
 }
 
-/* The volume every "play on the device" in the Voice view asks for (SAY <clip> <volume>): set by the
+/* The volume every "play on the device" in Custom voicepack and Custom speaker asks for (SAY <clip> <volume>): set by the
  * slider at the top of the view for this session, starting at the ground volume; the configuration's
  * volumes stay as they are. */
 let deviceVolume = null;
@@ -33,14 +36,16 @@ function voicepackTextLanguages() {
   return names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
 }
 
-function renderVoice() {
+function renderVoicepack() {
   leaveView();
   const settings = ttsSettings();
-  /* the settings saved on the device win over this browser's, so every browser makes the same sound */
+  /* the settings saved on the device win over this browser's once per configuration, so every browser
+   * makes the same sound (a shared pack opened as a start later still brings its own) */
   const stored = ttsSettingsFromDoc(state.ext);
-  if (stored) {
+  if (stored && state.ttsFromDoc !== state.ext) {
     Object.assign(settings, stored);
     saveTtsSettings(settings);
+    state.ttsFromDoc = state.ext;
   }
   const packId = systemValue("system_language_string") || "de";
   const pack = voicepackInfo(packId);
@@ -54,12 +59,61 @@ function renderVoice() {
   const G = { has: (name) => genClips.has(gKey(name)), get: (name) => genClips.get(gKey(name)), set: (name, c) => genClips.set(gKey(name), c) };
   const main = $("main");
   const deviceClips = new Set(); /* clip names in voices/custom on the device (refreshDevice) */
+  /* the pack's own spellings of catalogue texts (js/voicepacks.js packDraft); a clip whose text was
+   * changed is generated with it, and a shared pack passes it on */
+  const draft = packDraft(packId);
+  const catalogueText = (name) => voicepackText(catalogLang, name);
+  const textFor = (name) => (canGenerate && draft.overrides[name]) || catalogueText(name);
+  const noteText = (name, text) => {
+    if (!canGenerate || !catalogueText(name)) return;
+    if (text && text !== catalogueText(name)) draft.overrides[name] = text;
+    else delete draft.overrides[name];
+    savePackDraft(packId, draft);
+  };
 
   /* ---- the voice pack ---- */
   const packField = SYSTEM_GROUPS.flatMap((g) => g.fields).find((f) => f.key === "system_language_string");
   const packSel = input(packField, systemValue("system_language_string"), (v) => {
     setSystemValue("system_language_string", v);
-    renderVoice(); /* the texts and the voices follow the pack */
+    renderVoicepack(); /* the texts and the voices follow the pack */
+  });
+  /* where the pack starts from: the catalogue's texts, or a shared pack */
+  const startSel = el("select", { "aria-label": "Start from" }, el("option", { value: "" }, "the catalogue's texts"));
+  const startNote = el("span", { class: "unit" }, "");
+  const showStart = () => {
+    const n = Object.keys(draft.overrides).length;
+    startNote.textContent = n ? `${n} text${n > 1 ? "s" : ""} changed` : "";
+  };
+  if (draft.base) {
+    startSel.append(el("option", { value: draft.base }, draft.baseName || "a shared pack"));
+    startSel.value = draft.base;
+  }
+  showStart();
+  fetchPacks(packId).then((list) => {
+    for (const p of list) {
+      if (p.id !== draft.base) startSel.append(el("option", { value: p.id }, `${p.name} (${p.voice_label})`));
+    }
+  }).catch(() => { /* the service is away: the catalogue only */ });
+  startSel.addEventListener("change", async () => {
+    const id = startSel.value;
+    if (Object.keys(draft.overrides).length && !window.confirm("Replace the changed texts of this pack with those of the new start?")) {
+      startSel.value = draft.base || "";
+      return;
+    }
+    if (!id) {
+      savePackDraft(packId, { base: null, baseName: "", overrides: {} });
+    } else {
+      try {
+        const full = await fetchPack(id);
+        savePackDraft(packId, { base: id, baseName: full.name, overrides: full.overrides });
+        Object.assign(settings, full.settings, { voice: full.voice, locale: "" });
+        saveTtsSettings(settings);
+      } catch (e) {
+        setMessage(e.message, true);
+        return;
+      }
+    }
+    renderVoicepack();
   });
   const packNote = el("p", { class: canGenerate ? "sub" : "warn-text" }, canGenerate
     ? `Clips are generated with the ${textsName} texts of the pack; the voices below speak ` +
@@ -116,11 +170,10 @@ function renderVoice() {
     try {
       for (let i = 0; i < names.length; i++) {
         status.textContent = `Sample: ${i + 1} of ${names.length} (${names[i]}) …`;
-        const clip = voicepackClips(catalogLang).find((c) => c.name === names[i]);
-        G.set(names[i], await generateClip(clip.text, settings, 1, 5, { onWait: waiting(status, `Sample ${i + 1} of ${names.length}`) }));
+        G.set(names[i], await generateClip(textFor(names[i]), settings, 1, 5, { onWait: waiting(status, `Sample ${i + 1} of ${names.length}`) }));
         sample.push(names[i]);
       }
-      status.textContent = `Sample: ${names.length} clips as the device plays them - "${names.map((n) => voicepackText(catalogLang, n)).join(" · ")}". ` +
+      status.textContent = `Sample: ${names.length} clips as the device plays them - "${names.map(textFor).join(" · ")}". ` +
         "Move pitch, rate or the band-pass: the first clips play again with the new sound.";
       playClips(sampleBytes(sample));
       samplePlay.disabled = false;
@@ -133,99 +186,18 @@ function renderVoice() {
   samplePlay.addEventListener("click", () => playClips(sampleBytes(sample)));
   sampleStop.addEventListener("click", stopPlaying);
 
-  /* ---- the own voice: recorded or opened here, cloned on the home server ---- */
-  const readLang = canGenerate ? catalogLang : "en";
-  const readAloud = ["reset_hold", "reset_wait", "voice_update", "press_button_to_confirm", "bluetooth_pair"]
-    .map((n) => voicepackText(readLang, n)).filter(Boolean).join(". ");
-  const ownStatus = el("p", { class: "sub voice-status" }, "");
-  const consent = el("input", { type: "checkbox", id: `own-consent-${Date.now()}` });
-  const ownRecord = el("button", { type: "button" }, "● Record");
-  const ownFile = el("input", { type: "file", accept: "audio/*", hidden: true });
-  const ownOpen = el("button", { type: "button" }, "Open a recording …");
-  const ownDelete = el("button", { type: "button" }, "Delete my voice");
-  const ownState = () => {
-    const id = ownVoiceId(settings);
-    ownDelete.hidden = !id;
-    if (!ownStatus.textContent) {
-      ownStatus.textContent = id ? "Your voice is on the home server: \"Own voice\" in the voice list." : "";
-    }
-  };
-  const sendOwn = async (encoded) => {
-    if (!consent.checked) { ownStatus.textContent = "Tick the box first: only your own voice, or one you may use."; return; }
-    ownRecord.disabled = ownOpen.disabled = true;
-    try {
-      ownStatus.textContent = "Converting …";
-      const wav = await recordingToWav(encoded);
-      if (wav.seconds < 6) throw new Error(`The recording has ${wav.seconds.toFixed(1)} s of sound; 10 to 15 s are needed.`);
-      ownStatus.textContent = `Sending ${wav.seconds.toFixed(0)} s; the home server makes the voice from it (a few seconds) …`;
-      const made = await createOwnVoice(wav.bytes);
-      const old = ownVoiceId(settings);
-      settings.own = made.id;
-      settings.voice = ownVoiceName(picker.langSel.value, made.id);
+  /* a voice with defaults (a template from Custom speaker) brings its pitch, rate and band-pass along */
+  picker.voiceSel.addEventListener("change", () => {
+    const v = picker.current();
+    if (v && v.defaults) {
+      Object.assign(settings, v.defaults);
       saveTtsSettings(settings);
-      if (old && old !== made.id) deleteOwnVoice(old).catch(() => { /* gone already */ });
-      picker.refill();
-      ownStatus.textContent = `Your voice is ready (${made.seconds} s of speech used) and selected: "Own voice". Create a sample to hear it; ` +
-        "\"Save audio generator settings\" keeps it in the configuration.";
-      packInfo();
-    } catch (e) {
-      ownStatus.textContent = e.name === "EncodingError" ? "The browser cannot read this file as audio." : e.message;
-    }
-    ownRecord.disabled = ownOpen.disabled = false;
-    ownState();
-  };
-  let recording = null;
-  ownRecord.addEventListener("click", async () => {
-    if (recording) { recording.stop(); return; }
-    if (!consent.checked) { ownStatus.textContent = "Tick the box first: only your own voice, or one you may use."; return; }
-    try {
-      recording = await startRecording(OWN_MAX_S);
-    } catch (e) {
-      ownStatus.textContent = `No microphone: ${e.message}`;
+      renderVoicepack();
       return;
     }
-    const t0 = Date.now();
-    const tick = setInterval(() => { ownRecord.textContent = `■ Stop (${Math.round((Date.now() - t0) / 1000)} s)`; }, 250);
-    ownStatus.textContent = `Recording: read the text above, then stop (after ${OWN_MAX_S} s it stops by itself).`;
-    recording.done.then((encoded) => { /* stopped by the button or the time limit */
-      clearInterval(tick);
-      ownRecord.textContent = "● Record";
-      recording = null;
-      sendOwn(encoded);
-    });
+    packInfo();
   });
-  ownOpen.addEventListener("click", () => ownFile.click());
-  ownFile.addEventListener("change", async () => {
-    const f = ownFile.files[0];
-    ownFile.value = "";
-    if (f) sendOwn(await f.arrayBuffer());
-  });
-  ownDelete.addEventListener("click", async () => {
-    const id = ownVoiceId(settings);
-    if (!id || !window.confirm("Delete your voice on the home server? Clips you made with it stay where they are.")) return;
-    try {
-      const was = await deleteOwnVoice(id);
-      settings.own = "";
-      if (OWN_VOICE_RE.test(settings.voice || "")) settings.voice = "";
-      saveTtsSettings(settings);
-      picker.refill();
-      ownStatus.textContent = was ? "Your voice is deleted on the home server." : "The home server did not have it anymore.";
-    } catch (e) {
-      ownStatus.textContent = e.message;
-    }
-    ownState();
-  });
-  const ownRow = customRow("Own voice", el("div", { class: "own-voice" },
-    el("p", { class: "sub" }, `Your own voice for the clips: read this aloud, calmly and in a quiet room, for 10 to 15 s - "${readAloud}."`),
-    el("label", { class: "consent", for: consent.id }, consent, " This is my own voice, or the speaker has allowed me to use it."),
-    el("div", { class: "buttons" }, ownRecord, ownOpen, ownFile, ownDelete), ownStatus),
-  "Recording or file are converted to WAV in this browser and sent to the voice service; a server at the maintainer's " +
-    "home derives the voice's features from it and keeps only those, not the recording, under a random ID that only " +
-    "this browser - and your configuration, once you save the generator settings - knows. It stays until you delete it " +
-    "here. Clips made with it carry an inaudible watermark that marks them as synthetic.");
-  ownRow.hidden = true;
-  picker.ready.then(() => { ownRow.hidden = !picker.own().available; ownState(); packInfo(); });
-  picker.voiceSel.addEventListener("change", () => packInfo());
+  picker.ready.then(() => packInfo());
 
   /* ---- the clip to generate ---- */
   /* the name is never typed: the catalogue (✎) or a profile's voice line sets it, so every clip made here is one
@@ -255,7 +227,7 @@ function renderVoice() {
   const edit = (name, text, profile = null) => {
     edProfile = profile;
     nameInput.value = name;
-    textInput.value = text || (canGenerate ? voicepackText(catalogLang, name) : "") || "";
+    textInput.value = text || (canGenerate ? textFor(name) : "") || "";
     edWhat.textContent = profile
       ? `The voice line of profile ${profile} (${getP(profile, CUSTOM_NAME_KEY, true) || "custom name"}): stored as voices/custom/${name}.qoa ` +
         "and noted in the profile when you send it."
@@ -276,6 +248,7 @@ function renderVoice() {
     try {
       const c = await generateClip(text, settings, 1, CLIP_MAX_S, { onWait: waiting(edStatus, "Generating") });
       G.set(name, c);
+      if (!edProfile) { noteText(name, text); showStart(); } /* a changed text stays with the pack */
       edStatus.textContent = `Generated: ${c.seconds.toFixed(2)} s, ${(c.bytes.length / 1024).toFixed(1)} kB.`;
       playClip(c.bytes);
       renderCatalogue();
@@ -362,7 +335,7 @@ function renderVoice() {
         const clip = clips.shift();
         try {
           /* pack clips may be longer than Bluetooth ones; on the home server they wait behind single clips */
-          G.set(clip.name, await generateClip(clip.text, settings, 1, 5, { bulk: true }));
+          G.set(clip.name, await generateClip(textFor(clip.name), settings, 1, 5, { bulk: true }));
         } catch (e) {
           if (e.status === 429) { genCancel = true; failed.push("Rate limit of the service reached: raise RATE_LIMIT in the relay's .env for a whole pack."); }
           else if (e.status !== 400 && !retried.has(clip.name)) { retried.add(clip.name); clips.push(clip); continue; }
@@ -402,24 +375,81 @@ function renderVoice() {
     renderCatalogue();
   };
   stopBtn.addEventListener("click", () => { genCancel = true; });
-  buildBtn.addEventListener("click", () => {
+  /* The .ubpack of the clips generated in this session, with the settings as they are now: {image, clips}. */
+  const buildImage = () => {
     const files = [];
     for (const c of voicepackClips(catalogLang)) {
       const g = G.get(c.name);
-      if (g) files.push({ path: packPath(c.name), bytes: clipBytes(g) }); /* with the settings as they are now */
+      if (g) files.push({ path: packPath(c.name), bytes: clipBytes(g) });
     }
-    if (!files.length) { packStatus.textContent = "Nothing generated yet."; return; }
+    if (!files.length) throw new Error("Nothing generated yet.");
     const date = new Date().toISOString().slice(0, 10);
     files.push({ path: "version.txt", bytes: new TextEncoder().encode(`${date}\n`) });
+    return { image: buildFat16Image(files, "UBVOICES"), clips: files.length - 1 };
+  };
+  buildBtn.addEventListener("click", () => {
     try {
-      const image = buildFat16Image(files, "UBVOICES");
+      const { image, clips } = buildImage();
       downloadBytes(`${pack.id}.ubpack`, image);
-      packStatus.textContent = `${pack.id}.ubpack: ${files.length - 1} clips, ${(image.length / 1024 / 1024).toFixed(1)} MB. Copy it to voices/ on the SD card ` +
+      packStatus.textContent = `${pack.id}.ubpack: ${clips} clips, ${(image.length / 1024 / 1024).toFixed(1)} MB. Copy it to voices/ on the SD card ` +
         `(over USB); the device loads it as the ${packName} pack.`;
     } catch (e) {
       packStatus.textContent = e.message;
     }
   });
+
+  /* ---- sharing the pack with everyone ---- */
+  const shareName = el("input", { type: "text", maxlength: 40, placeholder: "the name others see in the list", "aria-label": "Pack name" });
+  const shareNote = el("span", { class: "unit" }, "");
+  const shareOk = el("input", { type: "checkbox", id: `pack-consent-${++uid}` });
+  const shareBtn = el("button", { type: "button", class: "primary" }, "Share this pack");
+  const shareStatus = el("p", { class: "sub voice-status" }, "");
+  let sharedNames = [];
+  const checkShareName = () => {
+    const n = shareName.value.trim();
+    const taken = sharedNames.includes(n.toLowerCase());
+    shareNote.textContent = !n ? "" : n.length < 2 ? "at least 2 characters" : taken ? `taken among the ${packName} packs` : "free";
+    shareNote.className = `unit${taken ? " warn-text" : ""}`;
+    return n.length >= 2 && !taken;
+  };
+  fetchPacks(packId).then((list) => { sharedNames = list.map((p) => p.name.toLowerCase()); checkShareName(); }).catch(() => { /* away */ });
+  shareName.addEventListener("input", checkShareName);
+  shareBtn.addEventListener("click", async () => {
+    const all = voicepackClips(catalogLang).length, have = countGenerated();
+    const v = picker.current();
+    if (!canGenerate) { shareStatus.textContent = `No ${packName} texts yet: only whole packs can be shared.`; return; }
+    if (have < all) { shareStatus.textContent = `Generate the whole pack first: ${all - have} clips are missing.`; return; }
+    if (!v) { shareStatus.textContent = "Choose a voice first."; return; }
+    if (v.provider === "own") { shareStatus.textContent = "A pack in your recording voice can be shared once the voice is a template (Custom speaker)."; return; }
+    if (!checkShareName()) { shareStatus.textContent = "Choose a free name of 2 to 40 characters."; return; }
+    if (!shareOk.checked) { shareStatus.textContent = "Tick the box to publish the pack for everyone."; return; }
+    shareBtn.disabled = true;
+    try {
+      shareStatus.textContent = "Building the pack …";
+      const { image, clips } = buildImage();
+      const name = shareName.value.trim();
+      await sharePack({ name, lang: packId, voice: v.name, voice_label: v.friendly || v.name, clips,
+        settings: { pitch: settings.pitch, rate: settings.rate, bandpass: settings.bandpass, lo: settings.lo, hi: settings.hi },
+        overrides: draft.overrides, base: draft.base }, image,
+      (n, total) => { shareStatus.textContent = `Uploading: ${Math.round((100 * n) / total)} % of ${(image.length / 1024 / 1024).toFixed(1)} MB …`; });
+      sharedNames.push(name.toLowerCase());
+      shareStatus.textContent = `Shared: "${name}" is in the list of the ${packName} packs (Voice) for everyone. ` +
+        "To have it removed, write to info@breezedude.de.";
+      shareOk.checked = false;
+      checkShareName();
+    } catch (e) {
+      shareStatus.textContent = e.message;
+    }
+    shareBtn.disabled = false;
+  });
+  const shareCard = fieldset({ title: "Share this pack", help: "Publishes the whole pack generated above - its clips, voice, " +
+      "settings and changed texts - for everyone: it appears under Voice in the list of this language, where others hear, " +
+      "download or start from it. The file is kept on the voice server at home." },
+  customRow("Name", el("div", { class: "band" }, shareName, shareNote)),
+  el("label", { class: "consent", for: shareOk.id }, shareOk,
+    " I publish this pack for everyone. Its voice is one I may use, and its texts are fine for all to hear. It is removed " +
+    "on request only: write to info@breezedude.de."),
+  el("div", { class: "buttons" }, shareBtn), shareStatus);
 
   const clipHead = el("div", { class: "subhead" }, "Clip", info("One clip: the pack's text or your own. Generate, listen here, " +
     "send it to the device - it lands in voices/custom and replaces the pack's clip of that name - and play it there.", "Clip"));
@@ -430,11 +460,12 @@ function renderVoice() {
       "to the device are exactly what you heard. \"Create a sample\" speaks a few typical lines as single clips, as the " +
       "device strings them together." },
   customRow("Voice pack", packSel, packField.help), packNote,
+  customRow("Start from", el("div", { class: "band" }, startSel, startNote), "The catalogue texts, or a pack someone shared: " +
+    "its voice, settings and changed texts come along (Voice lists the shared packs)."),
   customRow("Language", picker.langSel, "The voices of the pack's language and English."),
   customRow("Voice", picker.voiceSel, "Microsoft Edge's voices answer at once. The home server's (Chatterbox) sound more " +
     "natural but take a few seconds per clip it has not made before - it makes the pack clips of its voices in advance - " +
-    "and are missing from the list while that server is offline."),
-  ownRow,
+    "and are missing from the list while that server is offline. Your own voice: Voice → Custom speaker."),
   customRow("Pitch", slider("pitch", -50, 50, "%"), "Higher or lower, in percent; large shifts sound artificial."),
   customRow("Rate", slider("rate", -50, 50, "%"), "Faster or slower speech, the pitch unchanged."),
   customRow("Band-pass", el("div", { class: "band" }, bandBox, lo, el("span", { class: "unit" }, "Hz to"), hi,
@@ -502,20 +533,20 @@ function renderVoice() {
   const expanded = new Set();
   const clipRow = (c) => el("tr", { class: G.has(c.name) ? "done" : "" },
     el("td", { class: "mono" }, c.name),
-    el("td", {}, c.text),
+    el("td", {}, textFor(c.name), draft.overrides[c.name] ? el("small", { class: "unit", title: `catalogue: ${c.text}` }, " (changed)") : null),
     el("td", { class: "actions" },
       deviceClient() && onDevice(c.name) ? el("button", { class: "play", type: "button", title: "Play on the device",
         onclick: () => deviceTest(`SAY ${c.name} ${playVolume()}`) }, "▶") : null,
       G.has(c.name) ? el("button", { class: "play", type: "button", title: "Play the generated clip here",
         onclick: () => playClip(clipBytes(G.get(c.name))) }, "♪") : null,
-      el("button", { class: "play", type: "button", title: "Edit", onclick: () => edit(c.name, canGenerate ? c.text : "") }, "✎")));
+      el("button", { class: "play", type: "button", title: "Edit", onclick: () => edit(c.name, canGenerate ? textFor(c.name) : "") }, "✎")));
   const seriesKey = (name) => {
     if (/^\d+$/.test(name)) return "number";
     if (/^\d+_percent$/.test(name)) return "percent";
     const m = /^(.*?)_(-?\d+)$/.exec(name);
     return m ? m[1] : null;
   };
-  const matches = (c, q) => c.name.includes(q) || c.text.toLowerCase().includes(q);
+  const matches = (c, q) => c.name.includes(q) || textFor(c.name).toLowerCase().includes(q);
   const renderCatalogue = () => {
     const q = filter.value.trim().toLowerCase();
     const all = voicepackClips(catalogLang);
@@ -600,9 +631,9 @@ function renderVoice() {
     el("div", { class: "slider" }, volRange, volOut));
 
   main.replaceChildren(
-    el("div", { class: "head" }, el("h2", {}, "Voice"),
+    el("div", { class: "head" }, el("h2", {}, "Custom voicepack"),
       el("p", { class: "sub" }, "Voice clips from text-to-speech: single clips for the device, or a whole voice pack in the language of the device's pack.")),
-    volumePanel, generationCard, deviceCard, catalogueCard);
+    volumePanel, generationCard, shareCard, deviceCard, catalogueCard);
   if (deviceClient()) refreshDevice();
   state.cleanup = () => { genCancel = true; stopPlaying(); clearTimeout(liveTimer); };
 }

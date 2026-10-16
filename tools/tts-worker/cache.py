@@ -7,6 +7,7 @@ deletes its clips too; the hash covers the engine tag, so changing the model or 
 fresh set. Reading a clip touches it; above the size limit the least recently used clips go.
 """
 import hashlib
+import json
 import os
 import shutil
 from pathlib import Path
@@ -19,12 +20,14 @@ class Cache:
         self.tag = tag
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def path(self, voice, text):
-        digest = hashlib.sha256(f"{self.tag}|{voice.name}|{voice.stamp}|{text}".encode()).hexdigest()[:40]
+    def path(self, voice, text, settings=None):
+        """settings: the request's own Chatterbox settings (a test in the configurator), if any."""
+        extra = json.dumps(settings, sort_keys=True) if settings else ""
+        digest = hashlib.sha256(f"{self.tag}|{voice.name}|{voice.stamp}|{extra}|{text}".encode()).hexdigest()[:40]
         return self.root / voice.key / f"{digest}.mp3"
 
-    def get(self, voice, text):
-        p = self.path(voice, text)
+    def get(self, voice, text, settings=None):
+        p = self.path(voice, text, settings)
         try:
             data = p.read_bytes()
         except FileNotFoundError:
@@ -35,11 +38,11 @@ class Cache:
             pass
         return data
 
-    def has(self, voice, text):
-        return self.path(voice, text).is_file()
+    def has(self, voice, text, settings=None):
+        return self.path(voice, text, settings).is_file()
 
-    def put(self, voice, text, data):
-        p = self.path(voice, text)
+    def put(self, voice, text, data, settings=None):
+        p = self.path(voice, text, settings)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_bytes(data)

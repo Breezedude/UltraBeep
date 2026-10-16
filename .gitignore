@@ -30,3 +30,4 @@ RAW*.BIN
 /tools/analyzer/private/
 /tools/tts-relay/node_modules/
 /tools/tts-relay/.env
+/tools/tts-relay/data/

@@ -260,10 +260,15 @@ button.play.danger:hover { color: var(--error); border-color: var(--error); }
 .band input[type=number] { width: 90px; }
 .band select { width: auto; }
 .pack { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--border); }
-.own-voice { display: flex; flex-direction: column; min-width: 0; }
-.own-voice .sub { margin: 0 0 6px; }
-.own-voice .consent { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; }
-.own-voice .consent input { margin-top: 3px; }
+/* Custom speaker, sharing */
+.consent { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; margin: 8px 0 2px; max-width: 72ch; }
+.consent input { margin-top: 3px; flex: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
+.chip { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
+details.privacy { margin: 4px 0 20px; max-width: 76ch; font-size: 14px; color: var(--muted); }
+details.privacy summary { cursor: pointer; color: var(--text); padding: 6px 0; }
+details.privacy p { margin: 6px 0; }
+table.packlist td small { display: inline; }
 
 /* voice line (custom profile name) */
 .voice .row { border-top: 0; padding: 6px 0; }

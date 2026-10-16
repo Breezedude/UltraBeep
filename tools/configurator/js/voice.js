@@ -3,7 +3,7 @@
 /*
  * Voice clips from text-to-speech: the relay (tools/tts-relay at TTS_URL) speaks a text, the
  * browser decodes it, filters and levels it like the stock clips and encodes it to QOA
- * (js/qoa.js). Used by the Voice view (js/voicegen.js: single clips, the profiles' voice lines,
+ * (js/qoa.js). Used by Voice → Custom voicepack (js/voicegen.js: single clips, the profiles' voice lines,
  * whole packs). Language, voice, pitch, rate and the band-pass stay in this browser (localStorage)
  * and, once saved there, in the configuration on the device.
  *
@@ -48,7 +48,7 @@ function saveTtsSettings(s) {
 }
 
 /* The generator settings on the device (config_ext.ultrabip [global], written by "Save audio generator settings"
- * in the Voice view): every browser that opens the configuration then makes clips that sound the same. */
+ * in Custom voicepack): every browser that opens the configuration then makes clips that sound the same. */
 const TTS_KEYS = { locale: "voice_generator_locale_string", voice: "voice_generator_voice_string", pitch: "voice_generator_pitch_int",
   rate: "voice_generator_rate_int", bandpass: "voice_generator_bandpass_bool", lo: "voice_generator_bandlow_int",
   hi: "voice_generator_bandhigh_int" };
@@ -103,7 +103,8 @@ async function fetchTts(voice, text, opts = {}) {
     const res = await fetchService(`${TTS_URL}/v1/audio/speech`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "tts-1", input: text, voice, response_format: "mp3",
-        pitch: Math.round(opts.pitch || 0), rate: Math.round(opts.rate || 0), priority: opts.bulk ? "bulk" : undefined }),
+        pitch: Math.round(opts.pitch || 0), rate: Math.round(opts.rate || 0), priority: opts.bulk ? "bulk" : undefined,
+        settings: opts.settings || undefined }), /* Chatterbox settings tried on the Custom speaker page */
     });
     if (res.ok) return res.arrayBuffer();
     const wait = parseInt(res.headers.get("Retry-After"), 10);
@@ -128,6 +129,63 @@ function fetchVoiceCatalog() {
   }
   return voiceCatalog;
 }
+
+/* The voice list is fetched again on the next use (after a new template). */
+function resetVoiceCatalog() {
+  voiceCatalog = null;
+}
+
+/* ---- shared voice packs: descriptions in the relay's database, files on the home server ---- */
+
+async function serviceJson(path, init) {
+  const res = await fetchService(`${TTS_URL}${path}`, init);
+  if (!res.ok) throw await serviceError(res);
+  return res.json();
+}
+
+/* The shared packs of a voice pack id ("de", "us", ...): [{id, name, voice, voice_label, settings, clips, size, created, ...}]. */
+const fetchPacks = (lang) => serviceJson(`/v1/packs?lang=${encodeURIComponent(lang)}`).then((r) => r.packs);
+/* One pack with its changed texts: {..., overrides: {clip: text}}. */
+const fetchPack = (id) => serviceJson(`/v1/packs/${id}`);
+
+/* A pack's .ubpack bytes; onProgress(received, total). */
+async function downloadPack(id, onProgress) {
+  const res = await fetchService(`${TTS_URL}/v1/packs/${id}/file`);
+  if (!res.ok) throw await serviceError(res);
+  const total = parseInt(res.headers.get("Content-Length"), 10) || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    if (onProgress) onProgress(got, total);
+  }
+  const out = new Uint8Array(got);
+  let at = 0;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out;
+}
+
+/* Publishes a pack for everyone: the description, then the image in parts; returns the pack's id. */
+async function sharePack(desc, image, onProgress) {
+  const made = await serviceJson("/v1/packs", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...desc, size: image.length, consent: true }) });
+  const parts = Math.ceil(image.length / made.part_size);
+  for (let i = 0; i < parts; i++) {
+    await serviceJson(`/v1/packs/${made.id}/file?part=${i}&parts=${parts}`, { method: "PUT",
+      headers: { "Content-Type": "application/octet-stream", "X-Upload-Token": made.upload_token },
+      body: image.subarray(i * made.part_size, (i + 1) * made.part_size) });
+    if (onProgress) onProgress(i + 1, parts);
+  }
+  return made.id;
+}
+
+/* An own voice made a template for everyone: {voice}. */
+const publishVoice = (body) => serviceJson("/v1/voices/public", { method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ ...body, consent: true }) });
 
 /* ---- the own voice (cloned on the home server) ---- */
 
@@ -543,7 +601,7 @@ function voiceLineRow(n) {
   const clip = getP(n, VOICE_CLIP_KEY, true) || "";
   const status = el("span", { class: "unit" }, clip ? `${clip}.qoa` : "none yet");
   const btn = el("button", { type: "button", class: clip ? "" : "primary",
-    onclick: () => { state.voiceLineFor = n; state.view = "voice"; render(); } },
+    onclick: () => { state.voiceLineFor = n; state.view = "voicepack"; render(); } },
   clip ? "Make it again in the voice generator" : "Make it in the voice generator");
   const r = customRow("Voice line", el("div", { class: "voiceline" }, status, btn),
     "The clip the device says after \"select profile\". It is named after the profile and stays with it when " +

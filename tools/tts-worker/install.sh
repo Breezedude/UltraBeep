@@ -16,7 +16,7 @@ apt-get install -y -qq git python3-venv ca-certificates curl >/dev/null
 
 id tts >/dev/null 2>&1 || useradd --system --home-dir /var/lib/tts --no-create-home --shell /usr/sbin/nologin tts
 mkdir -p /opt/tts/src /opt/tts/models/chatterbox /opt/tts/models/chatterbox-turbo /etc/tts \
-  /var/lib/tts/voices /var/lib/tts/private /var/lib/tts/cache
+  /var/lib/tts/voices /var/lib/tts/private /var/lib/tts/packs /var/lib/tts/cache
 chown -R tts:tts /var/lib/tts
 chmod 750 /var/lib/tts
 chmod 700 /var/lib/tts/private  # other people's voices

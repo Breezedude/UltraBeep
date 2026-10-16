@@ -199,9 +199,9 @@ const SYSTEM_GROUPS = [
     fields: [
       { key: "system_language_string", label: "Voice pack", type: "select", def: "de",
         options: VOICEPACKS.map((p) => [p.id, `${p.label} (${p.id}.ubpack)`]),
-        help: "The voice pack in voices/ on the SD card: one of the manufacturer's packs (their file names) or a pack " +
-          "generated in the Voice view. The announcements and the profile names come from it; the Voice view " +
-          "generates clips in its language." },
+        help: "The voice pack in voices/ on the SD card: one of the manufacturer's packs (their file names), a pack " +
+          "shared by others (Voice) or one generated in Voice → Custom voicepack. The announcements and the profile names " +
+          "come from it; Custom voicepack generates clips in its language." },
       { key: "system_timezone_string", label: "Time zone", type: "select", global: true, zone: true, def: "berlin",
         options: TIME_ZONES.map((z) => [z.id, zoneLabel(z)]),
         help: "Where you fly: the standard offset from UTC and the summer time rule of that place. The device " +
@@ -262,7 +262,7 @@ const SYSTEM_GROUPS = [
           "plays the confirm melody instead of the clip." },
       { key: "bluetooth_pairannounce_bool", label: "Speak Bluetooth pairing request", type: "bool", def: "true", global: true,
         help: "When a new phone or browser asks for access, the device plays two rising tones and says \"Bluetooth, " +
-          "press the button to confirm\" (the extension clip press_button_to_confirm, generated in the Voice view). " +
+          "press the button to confirm\" (the extension clip press_button_to_confirm, generated in Voice → Custom voicepack). " +
           "Off: the two tones only." },
       { key: "system_blename_string", label: "Bluetooth name", type: "text", def: "", global: true, maxlength: 14,
         placeholder: "first word of the pilot name",

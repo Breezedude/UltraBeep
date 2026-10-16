@@ -3,6 +3,7 @@
  *   cd tools/tts-relay && npm install && node test/relay_test.mjs
  */
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -21,9 +22,12 @@ const port = await new Promise((resolve) => {
   const s = net.createServer().listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => resolve(p)); });
 });
 const base = `http://127.0.0.1:${port}`;
+const ADMIN = "admin-token-0123456789";
+const dbPath = path.join(os.tmpdir(), `relay-test-${port}.db`);
 const relay = spawn(process.execPath, [path.join(here, "..", "server.js")], {
   cwd: os.tmpdir(), /* no .env there */
-  env: { ...process.env, PORT: String(port), EDGE: "0", WORKER_SECRET: SECRET, WORKER_WAIT_MS: "800", RATE_LIMIT: "1000", OWN_VOICE_LIMIT: "2" },
+  env: { ...process.env, PORT: String(port), EDGE: "0", WORKER_SECRET: SECRET, WORKER_WAIT_MS: "800", RATE_LIMIT: "1000",
+    OWN_VOICE_LIMIT: "2", DB_PATH: dbPath, ADMIN_TOKEN: ADMIN, MAX_CHARS: "120" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let log = "";
@@ -31,9 +35,13 @@ relay.stdout.on("data", (d) => { log += d; });
 relay.stderr.on("data", (d) => { log += d; });
 for (let i = 0; i < 50 && !log.includes("tts-relay on"); i++) await sleep(100);
 
-/* A fake worker: answers speak with "MP3:<text>" after `delay` ms, clone with OWN_ID, forget with deleted. */
+/* A fake worker: answers speak with "MP3:<text>[settings]" after `delay` ms, clone with OWN_ID, forget with
+ * deleted, publish with a voice name, and keeps pack files in memory. */
+const stored = new Map(); /* pack id -> Buffer */
 function fakeWorker(secret = SECRET, opts = {}) {
   const w = { got: [], delay: 0, ws: null };
+  const send = (m) => w.ws.send(JSON.stringify(m));
+  const parts = new Map();
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/v1/worker`, { headers: { Authorization: `Bearer ${secret}` } });
     w.ws = ws;
@@ -50,13 +58,29 @@ function fakeWorker(secret = SECRET, opts = {}) {
       if (opts.silent) return;
       await sleep(w.delay);
       if (msg.type === "speak") {
-        if (msg.voice.endsWith("missing")) ws.send(JSON.stringify({ type: "error", id: msg.id, status: 404, message: "no such voice" }));
-        else ws.send(JSON.stringify({ type: "audio", id: msg.id, mime: "audio/mpeg", ms: 1500, cached: false,
-          data: Buffer.from(`MP3:${msg.text}`).toString("base64") }));
+        if (msg.voice.endsWith("missing")) send({ type: "error", id: msg.id, status: 404, message: "no such voice" });
+        else send({ type: "audio", id: msg.id, mime: "audio/mpeg", ms: 1500, cached: false,
+          data: Buffer.from(`MP3:${msg.text}${msg.settings ? JSON.stringify(msg.settings) : ""}`).toString("base64") });
       } else if (msg.type === "clone") {
-        ws.send(JSON.stringify({ type: "cloned", id: msg.id, voice_id: OWN_ID, seconds: 9.5 }));
+        send({ type: "cloned", id: msg.id, voice_id: OWN_ID, seconds: 9.5 });
       } else if (msg.type === "forget") {
-        ws.send(JSON.stringify({ type: "forgot", id: msg.id, deleted: msg.voice_id === OWN_ID }));
+        send({ type: "forgot", id: msg.id, deleted: msg.voice_id === OWN_ID });
+      } else if (msg.type === "publish") {
+        if (msg.name === "Test") send({ type: "error", id: msg.id, status: 409, message: "There is a voice called Test" });
+        else send({ type: "published", id: msg.id, voice: `cb:${msg.locale}-${msg.name.toLowerCase()}` });
+      } else if (msg.type === "pack_put") {
+        const list = parts.get(msg.pack) || [];
+        list.push(Buffer.from(msg.data, "base64"));
+        parts.set(msg.pack, list);
+        const done = list.length === msg.parts;
+        if (done) stored.set(msg.pack, Buffer.concat(list));
+        send({ type: "pack_stored", id: msg.id, done, ...(done ? { size: stored.get(msg.pack).length, sha256: "x" } : {}) });
+      } else if (msg.type === "pack_read") {
+        const file = stored.get(msg.pack);
+        if (!file) send({ type: "error", id: msg.id, status: 404, message: "no such pack" });
+        else send({ type: "pack_data", id: msg.id, size: file.length, data: file.subarray(msg.offset, msg.offset + msg.length).toString("base64") });
+      } else if (msg.type === "pack_delete") {
+        send({ type: "pack_deleted", id: msg.id, deleted: stored.delete(msg.pack) });
       }
     });
   });
@@ -151,6 +175,74 @@ try {
   r = await fetch(`${base}/v1/voices/own?consent=yes`, { method: "POST", body: wav() });
   check(r.status === 429, "own voice uploads limited per IP and day");
 
+  /* trial settings are passed on and keep their own cache entry */
+  r = await speak(VOICE, "Hallo Welt", { settings: { exaggeration: 0.9, bogus: 1 } });
+  check(r.ok && (await r.text()) === 'MP3:Hallo Welt{"exaggeration":0.9}', "trial settings passed on, unknown keys dropped");
+  r = await speak(VOICE, "Hallo Welt");
+  check((await r.text()) === "MP3:Hallo Welt", "the plain clip stays separate in the cache");
+
+  /* a template for everyone */
+  const pub = (body) => fetch(`${base}/v1/voices/public`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  r = await pub({ voice_id: OWN_ID, name: "Anna", locale: "de-DE", gender: "Female" });
+  check(r.status === 400, "template without consent: 400");
+  r = await pub({ voice_id: OWN_ID, name: "Test", locale: "de-DE", gender: "Female", consent: true });
+  check(r.status === 409, "template with a taken name: 409 from the worker");
+  r = await pub({ voice_id: OWN_ID, name: "Anna", locale: "de-DE", gender: "Female", consent: true, settings: { temperature: 0.7 }, audio: { pitch: 5 } });
+  j = await r.json();
+  check(r.status === 201 && j.voice === "cb:de-DE-anna" && w.got.some((m) => m.type === "publish" && m.settings.temperature === 0.7),
+    "template published");
+
+  /* a shared pack: announce, upload in parts, list, details, download, operator deletes */
+  const file = Buffer.alloc(2.5 * 2 ** 20, 7);
+  const packBody = { name: "Mein Pack", lang: "de", voice: VOICE, voice_label: "Test", clips: 979, size: file.length, consent: true,
+    settings: { pitch: 4, rate: -3, bandpass: true, lo: 250, hi: 9000 }, overrides: { "profile_hike": "Haik änd Flai" } };
+  const createPack = (b) => fetch(`${base}/v1/packs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+  r = await createPack({ ...packBody, consent: false });
+  check(r.status === 400, "pack without consent: 400");
+  r = await createPack({ ...packBody, voice: `cb:de-DE-own-${OWN_ID}` });
+  check(r.status === 400, "pack with an own voice: 400");
+  r = await createPack(packBody);
+  const made = await r.json();
+  check(r.status === 201 && /^[a-z0-9]{20}$/.test(made.id) && made.part_size === 2 ** 20, "pack announced");
+  r = await createPack({ ...packBody, name: "mein pack" });
+  check(r.status === 409, "pack name taken in the language (any case): 409");
+  r = await fetch(`${base}/v1/packs?lang=de`);
+  check((await r.json()).packs.length === 0, "an announced pack is not listed before its file is there");
+  const nParts = Math.ceil(file.length / made.part_size);
+  r = await fetch(`${base}/v1/packs/${made.id}/file?part=0&parts=${nParts}`, { method: "PUT", headers: { "X-Upload-Token": "wrong".padEnd(48, "x") },
+    body: file.subarray(0, made.part_size) });
+  check(r.status === 403, "upload with a wrong token: 403");
+  let done = false;
+  for (let i = 0; i < nParts; i++) {
+    r = await fetch(`${base}/v1/packs/${made.id}/file?part=${i}&parts=${nParts}`, { method: "PUT",
+      headers: { "X-Upload-Token": made.upload_token }, body: file.subarray(i * made.part_size, (i + 1) * made.part_size) });
+    done = (await r.json()).done;
+  }
+  check(done && stored.get(made.id)?.equals(file), "pack file uploaded in parts");
+  r = await fetch(`${base}/v1/packs/${made.id}/file?part=0&parts=1`, { method: "PUT", headers: { "X-Upload-Token": made.upload_token }, body: "x" });
+  check(r.status === 403, "no more uploads once the pack is complete");
+  r = await fetch(`${base}/v1/packs?lang=de`);
+  j = await r.json();
+  check(j.packs.length === 1 && j.packs[0].name === "Mein Pack" && j.packs[0].settings.pitch === 4 && j.packs[0].changed_texts === 1,
+    "pack listed with settings");
+  r = await fetch(`${base}/v1/packs?lang=fr`);
+  check((await r.json()).packs.length === 0, "pack list filtered by language");
+  r = await fetch(`${base}/v1/packs/${made.id}`);
+  j = await r.json();
+  check(j.overrides.profile_hike === "Haik änd Flai", "pack details with its changed texts");
+  r = await fetch(`${base}/v1/packs/${made.id}/file`);
+  const got = Buffer.from(await r.arrayBuffer());
+  check(r.ok && got.equals(file) && /de\.ubpack/.test(r.headers.get("content-disposition")), "pack downloaded whole, as de.ubpack");
+  r = await fetch(`${base}/v1/admin/packs/${made.id}`, { method: "DELETE" });
+  check(r.status === 403, "deleting needs the admin token");
+  r = await fetch(`${base}/v1/admin/packs`, { headers: { Authorization: `Bearer ${ADMIN}` } });
+  j = await r.json();
+  check(j.packs.length === 1 && j.packs[0].downloads === 1, "admin list counts downloads");
+  r = await fetch(`${base}/v1/admin/packs/${made.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${ADMIN}` } });
+  check(r.ok && !stored.has(made.id), "operator deletes a pack, file included");
+  r = await fetch(`${base}/v1/packs/${made.id}/file`);
+  check(r.status === 404, "a deleted pack is gone");
+
   /* a worker that drops with a job: the job waits for the next one */
   w.ws.close();
   await sleep(100);
@@ -171,6 +263,8 @@ try {
   console.log(`FAIL exception: ${e.stack}`);
 } finally {
   relay.kill();
+  await sleep(200);
+  for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.unlinkSync(f); } catch (e) { /* not there */ } }
 }
 if (failures) console.log(`\n--- relay log ---\n${log}`);
 console.log(failures ? `${failures} FAILED` : "all passed");

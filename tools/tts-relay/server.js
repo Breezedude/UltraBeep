@@ -8,15 +8,21 @@
  *   GET    /v1/voices?locale=de                                                        -> JSON list
  *   POST   /v1/voices/own?consent=yes  (16-bit mono WAV)  -> {"id"}: a private cloned voice
  *   DELETE /v1/voices/own/<id>                                     -> {"deleted"}
+ *   POST   /v1/voices/public  {"voice_id", "name", "locale", ...}  -> {"voice"}: an own voice for everyone
+ *   GET    /v1/packs?lang=de, GET /v1/packs/<id>, GET /v1/packs/<id>/file   shared voice packs
+ *   POST   /v1/packs, PUT /v1/packs/<id>/file?part=&parts=          publishing one (packs.js)
+ *   GET|DELETE /v1/admin/packs[/<id>]  (Authorization: Bearer ADMIN_TOKEN)   the operator's
  *   GET    /v1/worker  (WebSocket, Authorization: Bearer WORKER_SECRET): a worker's connection
  *   GET    /health
  * Settings come from .env (see .env.example); run behind nginx (nginx.conf.example) with pm2
  * (ecosystem.config.cjs). Abuse limits: text length, requests per IP and window, voice filter.
  */
 import crypto from "node:crypto";
+import { once } from "node:events";
 import http from "node:http";
 import msedge from "msedge-tts"; /* the Edge read-aloud protocol, maintained there (token scheme, versions) */
 import { WebSocketServer } from "ws";
+import { PACK_ID_RE, cleanPack, openPacks } from "./packs.js";
 
 const { MsEdgeTTS, OUTPUT_FORMAT } = msedge;
 
@@ -43,7 +49,14 @@ const cfg = {
   workerQueueMax: parseInt(process.env.WORKER_QUEUE_MAX || "300", 10),
   ownMaxBytes: parseInt(process.env.OWN_VOICE_MAX_BYTES || "2000000", 10),
   ownLimit: parseInt(process.env.OWN_VOICE_LIMIT || "10", 10), /* uploads per IP and day */
+  templateLimit: parseInt(process.env.TEMPLATE_LIMIT || "5", 10), /* public voices per IP and day */
+  packLimit: parseInt(process.env.PACK_LIMIT || "5", 10),         /* shared packs per IP and day */
+  packMaxBytes: parseInt(process.env.PACK_MAX_BYTES || String(40 * 2 ** 20), 10),
+  packPartBytes: 2 ** 20,
+  dbPath: process.env.DB_PATH || "data/relay.db",
+  adminToken: process.env.ADMIN_TOKEN || "", /* empty: no admin API */
 };
+const packs = openPacks(cfg.dbPath);
 
 /* ---------------------------------------------------------------- Edge TTS */
 
@@ -147,10 +160,35 @@ function workerVoices() {
   for (const w of workers) for (const v of w.voices) {
     if (seen.has(v.name)) continue;
     seen.add(v.name);
-    out.push({ name: v.name, locale: v.locale, gender: v.gender || "Unknown", friendly: v.friendly || v.name,
-      provider: "chatterbox", seconds: v.seconds || w.seconds });
+    const d = v.defaults && typeof v.defaults === "object" ? v.defaults : null;
+    out.push({ name: v.name, locale: v.locale, gender: v.gender || "Unknown", friendly: String(v.friendly || v.name).slice(0, 40),
+      provider: "chatterbox", seconds: v.seconds || w.seconds,
+      ...(d ? { defaults: { pitch: d.pitch | 0, rate: d.rate | 0, bandpass: d.bandpass !== false, lo: d.lo | 0 || 300, hi: d.hi | 0 || 8000 } } : {}) });
   }
   return out;
+}
+
+/* Chatterbox settings a speech request may try (the configurator's Custom speaker page). */
+function trialSettings(s) {
+  if (!s || typeof s !== "object") return null;
+  const out = {};
+  for (const [k, lo, hi] of [["exaggeration", 0.25, 2], ["cfg_weight", 0, 1], ["temperature", 0.05, 2]]) {
+    const v = Number(s[k]);
+    if (s[k] !== undefined && Number.isFinite(v)) out[k] = Math.round(Math.max(lo, Math.min(hi, v)) * 100) / 100;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/* A request that needs no model time (files, publishing): straight to a worker, past the queue. */
+function ask(msg, timeoutMs = 30000) {
+  const w = [...workers][0];
+  if (!w) return Promise.reject(httpError(503, "the voice server at home is offline: try again later"));
+  return new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { w.pending.delete(id); reject(httpError(504, "the voice server did not answer")); }, timeoutMs);
+    w.pending.set(id, { resolve, reject, timer });
+    w.ws.send(JSON.stringify({ ...msg, id }));
+  });
 }
 
 /* Whether worker w can speak with `voice`: a public voice it lists, or any own voice in a language it has. */
@@ -235,6 +273,14 @@ function onWorkerMessage(w, raw) {
     pump();
     return;
   }
+  const asked = w.pending.get(msg.id);
+  if (asked) {
+    w.pending.delete(msg.id);
+    clearTimeout(asked.timer);
+    if (msg.type !== "error") return asked.resolve(msg);
+    const status = [400, 404, 409, 413, 507].includes(msg.status) ? msg.status : 502;
+    return asked.reject(httpError(status, `voice server: ${String(msg.message || "failed").slice(0, 200)}`));
+  }
   const job = w.inflight.get(msg.id);
   if (!job) return;
   if (msg.type === "error") {
@@ -266,7 +312,8 @@ function acceptWorker(req, socket, head) {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    const w = { ws, name: clientIp(req), slots: 1, inflight: new Map(), voices: [], languages: new Set(), seconds: 4, alive: true };
+    const w = { ws, name: clientIp(req), slots: 1, inflight: new Map(), pending: new Map(), voices: [], languages: new Set(),
+      seconds: 4, alive: true };
     workers.add(w);
     console.log(`worker connected from ${clientIp(req)}`);
     ws.on("message", (raw) => onWorkerMessage(w, raw));
@@ -280,6 +327,8 @@ function acceptWorker(req, socket, head) {
         (job.bulk ? queues.bulk : queues.interactive).unshift(job);
       }
       w.inflight.clear();
+      for (const p of w.pending.values()) { clearTimeout(p.timer); p.reject(httpError(503, "the voice server went offline")); }
+      w.pending.clear();
       console.log(`worker ${w.name} disconnected`);
       if (!workers.size) setTimeout(pump, 30000); /* queued jobs fail if it stays away */
       else pump();
@@ -330,9 +379,9 @@ function cors(req, res) {
   const allow = cfg.allowedOrigins.includes("*") ? "*" : (origin && cfg.allowedOrigins.includes(origin) ? origin : null);
   if (allow) {
     res.setHeader("Access-Control-Allow-Origin", allow);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Expose-Headers", "Retry-After");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Upload-Token");
     res.setHeader("Access-Control-Max-Age", "600");
     if (allow !== "*") res.setHeader("Vary", "Origin");
   }
@@ -368,7 +417,7 @@ const VOICE_RE = /^[A-Za-z]{2,3}-[A-Za-z0-9]{2,8}-[A-Za-z0-9]{2,40}$/;
 
 /* A worker voice: the clip from the cache, a running job for it, or a new job; a clip that takes
  * longer than workerWaitMs is answered with 503 + Retry-After and served from the cache later. */
-async function workerSpeech(res, ip, voice, text, key, bulk) {
+async function workerSpeech(res, ip, voice, text, key, bulk, settings) {
   const t0 = Date.now();
   let audio = cache.get(key);
   const cached = !!audio;
@@ -380,7 +429,7 @@ async function workerSpeech(res, ip, voice, text, key, bulk) {
           res.setHeader("Retry-After", String(cfg.rateWindowS));
           return fail(res, 429, `rate limit: ${cfg.rateLimit} requests per ${cfg.rateWindowS} s`);
         }
-        job = enqueue({ key, voice, bulk, msg: { type: "speak", voice, text } });
+        job = enqueue({ key, voice, bulk, msg: { type: "speak", voice, text, ...(settings ? { settings } : {}) } });
       }
       audio = await waitFor(job, cfg.workerWaitMs);
     } catch (e) {
@@ -411,7 +460,9 @@ async function speech(req, res, ip) {
   if (voice.startsWith("cb:")) {
     if (!WORKER_VOICE_RE.test(voice)) return fail(res, 400, "voice not allowed");
     if (pitch || rate) return fail(res, 400, "pitch and rate are not available for this voice");
-    return workerSpeech(res, ip, voice, text, `${voice}|0|0|${text}`, body.priority === "bulk");
+    const settings = trialSettings(body.settings);
+    return workerSpeech(res, ip, voice, text, `${voice}|0|0|${settings ? JSON.stringify(settings) : ""}|${text}`,
+      body.priority === "bulk", settings);
   }
   if (!cfg.edge || !VOICE_RE.test(voice) || (cfg.voiceFilter && !cfg.voiceFilter.test(voice))) return fail(res, 400, "voice not allowed");
   const key = `${voice}|${pitch}|${rate}|${text}`;
@@ -484,9 +535,7 @@ async function ownVoiceCreate(req, res, ip, url) {
 async function ownVoiceDelete(res, ip, id) {
   if (!OWN_ID_RE.test(id)) return fail(res, 400, "not an own voice id");
   try {
-    const job = enqueue({ msg: { type: "forget", voice_id: id } });
-    const result = await waitFor(job, cfg.workerWaitMs);
-    if (result.pending) return fail(res, 503, "the voice server is busy: try again in a minute");
+    const result = await ask({ type: "forget", voice_id: id });
     /* the relay's cache may still hold clips of it: they go too */
     for (const key of cache.keys()) if (key.includes(`-own-${id}|`)) cache.delete(key);
     console.log(`${ip} own voice ${result.deleted ? "deleted" : "to delete not found"}`);
@@ -496,20 +545,149 @@ async function ownVoiceDelete(res, ip, id) {
   }
 }
 
+const templates = new Map(); /* ip -> [timestamps] of published voices */
+const packUploads = new Map(); /* ip -> [timestamps] of shared packs */
+
+async function readJson(req, limit = 64 * 1024) {
+  try { return JSON.parse((await readBody(req, limit)).toString()); } catch (e) { throw httpError(400, "invalid JSON body"); }
+}
+
+/* An own voice made public by its speaker ("Custom speaker" → Create template). */
+async function publishVoice(req, res, ip) {
+  const body = await readJson(req);
+  if (body.consent !== true) return fail(res, 400, "consent is required");
+  if (!OWN_ID_RE.test(String(body.voice_id || ""))) return fail(res, 400, "not an own voice id");
+  if (rateLimited(ip, templates, cfg.templateLimit, 24 * 3600)) return fail(res, 429, `at most ${cfg.templateLimit} voices per day`);
+  try {
+    const r = await ask({ type: "publish", voice_id: body.voice_id, name: String(body.name || "").slice(0, 60),
+      locale: String(body.locale || ""), gender: String(body.gender || ""), settings: trialSettings(body.settings) || {},
+      audio: body.audio && typeof body.audio === "object" ? body.audio : {}, consent: true });
+    console.log(`${ip} template published: ${r.voice}`);
+    return send(res, 201, { voice: r.voice });
+  } catch (e) {
+    return fail(res, e.status || 502, e.message);
+  }
+}
+
+/* A shared pack: its description first (201 {id, upload_token, part_size}), then the file in parts. */
+async function packCreate(req, res, ip) {
+  const body = await readJson(req, 256 * 1024);
+  if (body.consent !== true) return fail(res, 400, "consent is required");
+  let pack;
+  try { pack = cleanPack(body, cfg.maxChars); } catch (e) { return fail(res, 400, e.message); }
+  if (pack.size > cfg.packMaxBytes) return fail(res, 413, `a pack may have ${Math.floor(cfg.packMaxBytes / 2 ** 20)} MB at most`);
+  if (!workers.size) return fail(res, 503, "the voice server at home is offline: try again later");
+  if (rateLimited(ip, packUploads, cfg.packLimit, 24 * 3600)) return fail(res, 429, `at most ${cfg.packLimit} shared packs per day`);
+  const made = packs.create(pack);
+  if (!made) return fail(res, 409, `there is a pack called "${pack.name}" in this language already`);
+  console.log(`${ip} pack ${made.id} "${pack.name}" (${pack.lang}, ${pack.voice}) announced, ${pack.size} B`);
+  return send(res, 201, { id: made.id, upload_token: made.token, part_size: cfg.packPartBytes });
+}
+
+async function packPart(req, res, id, url) {
+  const token = packs.token(id);
+  const given = String(req.headers["x-upload-token"] || "");
+  if (!token || given.length !== token.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token))) {
+    return fail(res, 403, "no upload open for this pack");
+  }
+  const part = parseInt(url.searchParams.get("part"), 10), parts = parseInt(url.searchParams.get("parts"), 10);
+  let data;
+  try { data = await readBody(req, cfg.packPartBytes); } catch (e) { return fail(res, 413, "part too large"); }
+  const pack = packs.get(id);
+  if (!(parts >= 1 && part >= 0 && part < parts) || parts > Math.ceil(pack.size / cfg.packPartBytes) + 1) return fail(res, 400, "bad part");
+  try {
+    const r = await ask({ type: "pack_put", pack: id, part, parts, data: data.toString("base64") });
+    if (r.done) {
+      packs.ready(id, r.sha256, r.size);
+      console.log(`pack ${id} "${pack.name}" published: ${r.size} B`);
+    }
+    return send(res, 200, { done: !!r.done });
+  } catch (e) {
+    return fail(res, e.status || 502, e.message);
+  }
+}
+
+/* The file, read from the worker a piece at a time while the client takes it. */
+async function packDownload(req, res, id) {
+  const pack = packs.get(id);
+  if (!pack || pack.state !== "ready") return fail(res, 404, "no such pack");
+  if (!workers.size) return fail(res, 503, "the voice server at home is offline: try again later");
+  let first;
+  try { first = await ask({ type: "pack_read", pack: id, offset: 0, length: cfg.packPartBytes }); } catch (e) { return fail(res, e.status || 502, e.message); }
+  res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": first.size, "Cache-Control": "no-store",
+    "Content-Disposition": `attachment; filename="${pack.lang}.ubpack"` });
+  packs.counted(id);
+  let chunk = Buffer.from(first.data, "base64"), offset = 0;
+  try {
+    while (chunk.length) {
+      if (!res.write(chunk)) await once(res, "drain");
+      offset += chunk.length;
+      if (offset >= first.size || res.destroyed) break;
+      chunk = Buffer.from((await ask({ type: "pack_read", pack: id, offset, length: cfg.packPartBytes })).data, "base64");
+    }
+    res.end();
+  } catch (e) {
+    console.log(`pack ${id} download broke off: ${e.message}`);
+    res.destroy();
+  }
+}
+
+const packSummary = (p) => ({ id: p.id, lang: p.lang, name: p.name, voice: p.voice, voice_label: p.voice_label, clips: p.clips,
+  size: p.size, created: p.created, downloads: p.downloads, base: p.base, settings: p.settings,
+  changed_texts: Object.keys(p.overrides || {}).length });
+
+function isAdmin(req) {
+  const auth = String(req.headers.authorization || "");
+  if (cfg.adminToken.length < 16 || !auth.startsWith("Bearer ")) return false;
+  const a = crypto.createHash("sha256").update(auth.slice(7)).digest(), b = crypto.createHash("sha256").update(cfg.adminToken).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+async function packDelete(res, id) {
+  const pack = packs.get(id);
+  if (!pack) return fail(res, 404, "no such pack");
+  try { await ask({ type: "pack_delete", pack: id }); } catch (e) { return fail(res, e.status || 502, e.message); }
+  packs.remove(id);
+  console.log(`pack ${id} "${pack.name}" deleted by the operator`);
+  return send(res, 200, { deleted: true });
+}
+
+/* uploads that never finished free their name after two hours */
+setInterval(async () => {
+  for (const id of packs.stale(2 * 3600 * 1000)) {
+    try { await ask({ type: "pack_delete", pack: id }); packs.remove(id); console.log(`pack ${id}: unfinished upload dropped`); } catch (e) { /* worker away: next time */ }
+  }
+}, 10 * 60 * 1000).unref();
+
 const server = http.createServer(async (req, res) => {
   const ip = clientIp(req);
   const url = new URL(req.url, "http://localhost");
   if (!cors(req, res)) return fail(res, 403, "origin not allowed");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
   try {
-    if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true, workers: workers.size });
-    if (req.method === "GET" && url.pathname === "/v1/voices") {
-      return send(res, 200, await voiceList((url.searchParams.get("locale") || "").toLowerCase()));
+    const p = url.pathname, m = req.method;
+    if (m === "GET" && p === "/health") return send(res, 200, { ok: true, workers: workers.size, packs: packs.count() });
+    if (m === "GET" && p === "/v1/voices") return send(res, 200, await voiceList((url.searchParams.get("locale") || "").toLowerCase()));
+    if (m === "POST" && p === "/v1/audio/speech") return await speech(req, res, ip);
+    if (m === "POST" && p === "/v1/voices/own") return await ownVoiceCreate(req, res, ip, url);
+    if (m === "POST" && p === "/v1/voices/public") return await publishVoice(req, res, ip);
+    const own = /^\/v1\/voices\/own\/([^/]+)$/.exec(p);
+    if (m === "DELETE" && own) return await ownVoiceDelete(res, ip, own[1]);
+    if (m === "GET" && p === "/v1/packs") return send(res, 200, { packs: packs.list(url.searchParams.get("lang") || "").map(packSummary) });
+    if (m === "POST" && p === "/v1/packs") return await packCreate(req, res, ip);
+    const pk = /^\/v1\/packs\/([a-z0-9]+)(\/file)?$/.exec(p);
+    if (pk && PACK_ID_RE.test(pk[1])) {
+      if (m === "GET" && pk[2]) return await packDownload(req, res, pk[1]);
+      if (m === "PUT" && pk[2]) return await packPart(req, res, pk[1], url);
+      const pack = packs.get(pk[1]);
+      if (m === "GET" && pack && pack.state === "ready") return send(res, 200, { ...packSummary(pack), overrides: pack.overrides });
     }
-    if (req.method === "POST" && url.pathname === "/v1/audio/speech") return await speech(req, res, ip);
-    if (req.method === "POST" && url.pathname === "/v1/voices/own") return await ownVoiceCreate(req, res, ip, url);
-    const own = /^\/v1\/voices\/own\/([^/]+)$/.exec(url.pathname);
-    if (req.method === "DELETE" && own) return await ownVoiceDelete(res, ip, own[1]);
+    const adm = /^\/v1\/admin\/packs(?:\/([a-z0-9]+))?$/.exec(p);
+    if (adm) {
+      if (!isAdmin(req)) return fail(res, 403, "admin only");
+      if (m === "GET" && !adm[1]) return send(res, 200, { packs: packs.all().map((x) => ({ ...packSummary(x), state: x.state })) });
+      if (m === "DELETE" && adm[1]) return await packDelete(res, adm[1]);
+    }
     return fail(res, 404, "not found");
   } catch (e) {
     console.log(`${ip} ${req.method} ${url.pathname} ERROR ${e.message}`);

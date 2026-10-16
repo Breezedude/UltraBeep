@@ -14,6 +14,8 @@ import random
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
@@ -159,6 +161,44 @@ def private_count():
     return f"{n} private voices uploaded through the configurator (kept until their owners delete them)."
 
 
+# ---- the packs shared from the configurator (their descriptions live in the relay's database)
+
+RELAY_HTTP = os.environ.get("RELAY_HTTP", "https://voice.breezedude.de")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+
+
+def relay_admin(method, path):
+    req = urllib.request.Request(f"{RELAY_HTTP}{path}", method=method, headers={"Authorization": f"Bearer {ADMIN_TOKEN}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise gr.Error(f"relay: HTTP {e.code} {e.read()[:200].decode(errors='replace')}")
+    except OSError as e:
+        raise gr.Error(f"relay: {e}")
+
+
+def list_packs():
+    if not ADMIN_TOKEN:
+        return "Set RELAY_HTTP and ADMIN_TOKEN (the relay's) in /etc/tts/worker.env to see the shared packs here."
+    packs = relay_admin("GET", "/v1/admin/packs")["packs"]
+    if not packs:
+        return "No shared packs."
+    rows = ["| id | pack | name | voice | made | clips | MB | downloads | changed texts | state |", "|" + "---|" * 10]
+    for p in packs:
+        rows.append(f"| `{p['id']}` | {p['lang']} | {p['name']} | {p['voice_label']} (`{p['voice']}`) | {p['created'][:16]} | "
+                    f"{p['clips']} | {p['size'] / 2**20:.1f} | {p['downloads']} | {p['changed_texts']} | {p['state']} |")
+    return "\n".join(rows)
+
+
+def delete_pack(pack_id):
+    pack_id = (pack_id or "").strip()
+    if not re.fullmatch(r"[a-z0-9]{20}", pack_id):
+        raise gr.Error("Paste the pack's id (20 characters) from the list.")
+    relay_admin("DELETE", f"/v1/admin/packs/{pack_id}")
+    return list_packs(), ""
+
+
 EXAMPLES = [
     ["1230 Meter", "de-DE"], ["-100 Meter", "de-DE"], ["minus 1,5 Meter pro Sekunde", "de-DE"],
     ["47 Kilometer pro Stunde", "de-DE"], ["GPS ok", "de-DE"], ["Thermikausstieg", "de-DE"],
@@ -208,6 +248,14 @@ with gr.Blocks(title="Chatterbox lab", analytics_enabled=False) as demo:
                     delete_btn = gr.Button("Delete selected voice", variant="stop")
                 voice_status = gr.Markdown()
             gr.Markdown(private_count())
+            with gr.Accordion("Shared packs (published from the configurator; only you delete them)", open=False):
+                packs_list = gr.Markdown()
+                with gr.Row():
+                    packs_btn = gr.Button("Load the list")
+                    pack_id = gr.Textbox(label="Pack id", placeholder="20 characters from the list")
+                    pack_del = gr.Button("Delete pack", variant="stop")
+                gr.Markdown("Templates published from the configurator are voices like the others: pick them above "
+                            "(\"source\": configurator in their voice.json) and delete them there.")
         with gr.Column():
             output = gr.Audio(label="Result", type="numpy", autoplay=True)
             info = gr.Markdown()
@@ -222,6 +270,8 @@ with gr.Blocks(title="Chatterbox lab", analytics_enabled=False) as demo:
     save_btn.click(save_voice, [voice_name, clip, voice, gender, locales, public, voice_note, exaggeration, cfg_weight,
                                 temperature], [voice, clip, voice_status])
     delete_btn.click(delete_voice, voice, [voice, voice_status])
+    packs_btn.click(list_packs, None, packs_list)
+    pack_del.click(delete_pack, pack_id, [packs_list, pack_id])
 
 
 # Gradio's page template preconnects to Google Fonts and loads iframe-resizer from cdnjs; both would

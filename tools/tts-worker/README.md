@@ -14,10 +14,19 @@ browser ──https──> voice.breezedude.de (nginx, tts-relay) <──wss, se
 * **Voices** are reference clips turned into Chatterbox's conditioning. Public ones are made in the
   lab (below) and listed as `cb:<locale>-<name>` (e.g. `cb:de-DE-florian`) in the locales they are
   offered in; the locale picks the language of the text.
-* **Own voices**: anyone can clone their own voice from the configurator (Voice view → Own voice):
-  the browser converts the recording to WAV and uploads it; the worker keeps only the derived
+* **Own voices**: anyone can clone their own voice in the configurator (Voice → Custom speaker): the
+  browser converts the recording to WAV and uploads it; the worker keeps only the derived
   conditioning (not the recording) under a random id, as `cb:<locale>-own-<id>`. It is never listed,
-  works in every Chatterbox language and stays until its owner deletes it there.
+  works in every Chatterbox language and stays until its owner deletes it there. Tried with
+  Chatterbox settings of its own (`settings` of a speak, cached apart), it can be published as a
+  **template**: a copy becomes a public voice of the chosen name (unique per language), with those
+  settings and the configurator's pitch, rate and band-pass as its defaults (`"source":
+  "configurator"` in its voice.json). Templates are public at once; only the operator deletes them
+  (in the lab).
+* **Shared packs**: whole packs published from the configurator (Voice → Custom voicepack → Share).
+  The relay keeps their descriptions; the worker keeps the files in `PACK_DIR` (`PACK_MAX_MB` each,
+  `PACK_STORAGE_MB` in all), takes them in 1 MB parts (the first must be a FAT16 boot sector) and
+  reads them out piece by piece for downloads.
 * **Cache**: a clip depends only on voice and text (pitch, rate and the band-pass are applied in the
   browser), so each is made once and served from disk afterwards (`CACHE_MAX_MB`, least recently
   used go first). While nobody asks for clips, the worker renders the voice pack texts of every
@@ -64,8 +73,8 @@ Later changes: `tools/tts-worker/deploy.sh root@<host>` (copies, exports the pac
 `/opt/tts/catalogue.json`, restarts). A Docker image is not needed: Docker in an LXC would need
 nesting, and the venv is all there is.
 
-Data: `/var/lib/tts/voices` (public voices), `/var/lib/tts/private` (own voices, mode 700),
-`/var/lib/tts/cache/clips`.
+Data: `/var/lib/tts/voices` (public voices, templates included), `/var/lib/tts/private` (own voices,
+mode 700), `/var/lib/tts/packs` (shared packs), `/var/lib/tts/cache/clips`.
 
 ## The lab
 
@@ -79,7 +88,9 @@ settings (exaggeration, CFG/pace, temperature). The worker picks changes up with
 voice whose reference or settings changed are made anew. Only use your own voice, or one whose
 speaker agreed - never clone a real person without consent. The page loads nothing from outside:
 the theme uses system fonts, and a middleware removes the Google Fonts preconnect and the cdnjs
-script Gradio's template carries.
+script Gradio's template carries. "Shared packs" lists the packs people published (with
+`RELAY_HTTP` and the relay's `ADMIN_TOKEN` in `/etc/tts/worker.env`) and deletes one by its id;
+templates from the configurator are deleted like every voice, from the voice list.
 
 ## Files
 
@@ -90,6 +101,7 @@ script Gradio's template carries.
 | `voices.py` | public and own voices, their names |
 | `textnorm.py` | numbers as words, plausible clip lengths |
 | `cache.py` | the clip cache on disk |
+| `packs.py` | the files of the shared packs |
 | `lab.py` | the lab |
 | `export_catalogue.js` | the configurator's pack texts as JSON, for prerendering |
 | `install.sh`, `deploy.sh`, `systemd/`, `worker.env.example` | setup |
@@ -107,14 +119,19 @@ JSON text frames on `wss://<relay>/v1/worker`, `Authorization: Bearer <WORKER_SE
 | From | Message |
 |---|---|
 | worker | `{"type": "hello" \| "voices", "name", "slots", "seconds", "languages": [...], "voices": [{name, locale, gender, friendly}]}` |
-| relay | `{"type": "speak", "id", "voice", "text"}` → `{"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms"}` |
+| relay | `{"type": "speak", "id", "voice", "text", "settings"?}` → `{"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms"}` |
 | relay | `{"type": "clone", "id", "wav": base64, "consent": true}` → `{"type": "cloned", "id", "voice_id", "seconds"}` |
 | relay | `{"type": "forget", "id", "voice_id"}` → `{"type": "forgot", "id", "deleted"}` |
-| worker | `{"type": "error", "id", "status": 400 \| 404 \| 500, "message"}` |
+| relay | `{"type": "publish", "id", "voice_id", "name", "locale", "gender", "settings", "audio", "consent": true}` → a `voices` update, then `{"type": "published", "id", "voice"}` |
+| relay | `{"type": "pack_put", "id", "pack", "part", "parts", "data"}` → `{"type": "pack_stored", "id", "done", "size"?, "sha256"?}` |
+| relay | `{"type": "pack_read", "id", "pack", "offset", "length"}` → `{"type": "pack_data", "id", "data", "size"}` |
+| relay | `{"type": "pack_delete", "id", "pack"}` → `{"type": "pack_deleted", "id", "deleted"}` |
+| worker | `{"type": "error", "id", "status": 400 \| 404 \| 409 \| 413 \| 507 \| 500, "message"}` |
 
-The relay sends at most `slots` jobs at a time, single clips before the bulk of a pack, and gives a
-job back to the queue when the worker drops. One worker is the expected setup: own voices live on
-the worker that made them.
+The relay sends at most `slots` speech and clone jobs at a time, single clips before the bulk of a
+pack, and gives a job back to the queue when the worker drops; publishing, forgetting and the pack
+files go past that queue (they need no model). One worker is the expected setup: own voices,
+templates and pack files live on the worker that made them.
 
 ## Licences
 

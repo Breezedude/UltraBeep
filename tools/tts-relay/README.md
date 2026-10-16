@@ -10,16 +10,29 @@ It also offers the voices of a TTS worker at home (`tools/tts-worker`, Chatterbo
 connects out to the relay over a WebSocket with a shared secret, announces its voices and takes
 the jobs for them. Its voices are listed while it is connected, with the provider `chatterbox`.
 
+Shared voice packs: anyone can publish a whole pack from the configurator (Custom voicepack). The
+relay keeps the pack descriptions in SQLite (`node:sqlite`, `DB_PATH`), the worker keeps the files;
+uploads and downloads pass through the relay in 1 MB parts. Packs and voice templates are public at
+once; only the operator deletes them (the admin API with `ADMIN_TOKEN`, used by the worker's lab).
+
 ## API
 
 | Request | Answer |
 |---|---|
 | `POST /v1/audio/speech` with JSON `{"input": "Ozone Rush", "voice": "de-DE-KatjaNeural", "pitch": 0, "rate": 0}` | `audio/mpeg` (24 kHz mono MP3); `pitch` and `rate` in percent (-50..50) are our extension (SSML prosody, Edge voices only); `"priority": "bulk"` puts a worker clip behind single clips (a whole pack) |
-| `GET /v1/voices?locale=de` | `{"voices": [{"name", "locale", "gender", "friendly", "provider", "seconds"}], "own": {"available", "languages", "seconds"}}`; `provider` is `edge` or `chatterbox`, `seconds` a worker voice's time per new clip |
+| `GET /v1/voices?locale=de` | `{"voices": [{"name", "locale", "gender", "friendly", "provider", "seconds", "defaults"?}], "own": {"available", "languages", "seconds"}}`; `provider` is `edge` or `chatterbox`, `seconds` a worker voice's time per new clip, `defaults` a template's pitch, rate and band-pass |
 | `POST /v1/voices/own?consent=yes` with a 16-bit mono WAV (at most `OWN_VOICE_MAX_BYTES`) | `201 {"id", "seconds"}`: an own voice, cloned by the worker, usable as `cb:<locale>-own-<id>` in every language of `own.languages`, never listed |
 | `DELETE /v1/voices/own/<id>` | `{"deleted": true}`, or 404 |
+| `POST /v1/voices/public` with JSON `{"voice_id", "name", "locale", "gender", "settings", "audio", "consent": true}` | `201 {"voice": "cb:de-DE-<name>"}`: the own voice becomes a template for everyone (409 for a name taken in that language) |
+| `POST /v1/audio/speech` with `"settings": {"exaggeration", "cfg_weight", "temperature"}` | a worker clip with these Chatterbox settings (Custom speaker), cached apart from the plain one |
+| `GET /v1/packs?lang=de` | `{"packs": [{"id", "name", "lang", "voice", "voice_label", "settings", "clips", "size", "created", "downloads", "base", "changed_texts"}]}` (the voice pack id as `lang`) |
+| `GET /v1/packs/<id>` | the same with `"overrides": {clip: text}` |
+| `GET /v1/packs/<id>/file` | the `.ubpack` (`Content-Disposition: <lang>.ubpack`) |
+| `POST /v1/packs` with JSON `{"name", "lang", "voice", "voice_label", "clips", "size", "settings", "overrides", "base", "consent": true}` | `201 {"id", "upload_token", "part_size"}` (409: name taken in the language; own voices refused) |
+| `PUT /v1/packs/<id>/file?part=<n>&parts=<m>` with `X-Upload-Token` | `{"done"}`; the pack is listed after its last part |
+| `GET /v1/admin/packs`, `DELETE /v1/admin/packs/<id>` with `Authorization: Bearer <ADMIN_TOKEN>` | all packs with their state; deleting removes the file too |
 | `GET /v1/worker` (WebSocket upgrade, `Authorization: Bearer <WORKER_SECRET>`) | the worker's connection; protocol in `tools/tts-worker/README.md` |
-| `GET /health` | `{"ok": true, "workers": n}` |
+| `GET /health` | `{"ok": true, "workers": n, "packs": n}` |
 
 Errors come as `{"error": {"message": ...}}` with 400 (input, voice, recording), 404 (own voice
 gone), 429 (rate limit, with `Retry-After`), 502 (Edge or the worker failed), 503 (the worker is
@@ -44,6 +57,11 @@ when asked again; nginx gives up after 30 s, so a request waits at most `WORKER_
   against the rate limit.
 * `OWN_VOICE_LIMIT` (10) own voices per IP and day, `OWN_VOICE_MAX_BYTES` (2000000) per recording
   (the configurator sends at most 20 s, about 1 MB).
+* `TEMPLATE_LIMIT` (5) voice templates and `PACK_LIMIT` (5) shared packs per IP and day,
+  `PACK_MAX_BYTES` (40 MB) per pack (a whole pack is about 16 MB). Unfinished uploads free their
+  name after two hours.
+* `DB_PATH` (`data/relay.db`): the pack database. `ADMIN_TOKEN` (at least 16 characters): the
+  operator's key for listing and deleting packs; empty: no admin API.
 
 ## Setup
 
@@ -58,7 +76,8 @@ pm2 save
 nginx: `nginx.conf.example` (TLS as usual; the `limit_req_zone` line goes into the `http`
 context). The relay listens on 127.0.0.1 only. For a worker, nginx must pass the WebSocket
 upgrade on `/v1/worker` (and keep the quiet connection open: the relay pings every 30 s), and
-accept the recordings on `/v1/voices/own` (the 8 kB body limit of `/` is too small for them).
+accept the recordings on `/v1/voices/own` and the pack parts on `/v1/packs/<id>/file` (the 8 kB
+body limit of `/` is too small for them).
 
 Test:
 
