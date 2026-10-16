@@ -52,6 +52,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 #message { padding: 0 20px; min-height: 0; font-size: 14px; }
 #message:not(:empty) { padding: 9px 20px; background: var(--accent-soft); }
 #message.error { background: color-mix(in srgb, var(--error) 14%, transparent); color: var(--error); }
+#message .msg-action { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+#message .msg-action:hover { color: var(--accent); }
 
 /* ---- welcome ---- */
 .welcome { max-width: 760px; margin: 48px auto; padding: 0 20px; }

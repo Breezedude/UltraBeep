@@ -1010,19 +1010,34 @@ static void check_faults(void)
  * switches off instead). Announced with the stock's clip "loading configuration"; the GNSS module
  * and the voice pack are restarted only when their settings changed.
  */
+static volatile bool reload_requested; /* the configurator's RELOAD (ble.c) */
+
+void system_request_config_reload(void)
+{
+  reload_requested = true;
+}
+
+/*
+ * A new configuration taken over at once: a file uploaded by the BipLink app (config.new.ultrabip), or the
+ * configurator's "Apply now" after it saved the files. Sensors, GNSS and the voice pack restart only when
+ * their settings changed. The Bluetooth name, the remote control and the raw log follow at the next power on.
+ */
 static void check_config_update(void)
 {
   if (config_take_if_found_request()) {
     config_mirror_if_found(); /* the configurator sent a new note */
   }
-  if (!biplink_take_config_update()) {
+  bool from_app = biplink_take_config_update();
+  bool from_configurator = reload_requested;
+  reload_requested = false;
+  if (!from_app && !from_configurator) {
     return;
   }
   const config_t *c = config_get();
   uint8_t gps_rate = c->gps_rate, gps_systems = c->gps_systems;
   char language[sizeof(c->language)];
   snprintf(language, sizeof(language), "%s", c->language);
-  log_printf("Config: new file from BipLink - reloading");
+  log_printf("Config: %s - reloading", from_app ? "new file from BipLink" : "the configurator asked to apply it");
   sound_say1("loading_config", system_voice());
   config_adopt_new();
   config_load(config_get());
@@ -1041,6 +1056,7 @@ static void check_config_update(void)
   }
   flight_set_landing(&flight, c->landing_detect, c->landing_time_s);
   apply_takeoff_config();
+  sensors_set_tap_sensitivity(c->profile[profile - 1].tap_sensitivity); /* the profile in use */
 }
 
 /* Every 10 s on battery: a warning, and a clean power off before the battery is empty. */

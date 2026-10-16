@@ -42,6 +42,8 @@ uint32_t system_battery_mv(void); /* last reading every 10 s, 0 = none yet */
 bool system_in_flight(void);
 /* The device may take a second Bluetooth link now (ble.c advertises while connected). */
 bool system_second_link_allowed(void);
+/* The configurator saved new files and asks for them at once (BLE task); the system task reloads. */
+void system_request_config_reload(void);
 /* Local time for a UTC time: the profile's offset, plus European summer time if automatic. */
 uint32_t system_local_unix(uint32_t utc);
 /* Double taps accepted since the start (configurator: live values). */

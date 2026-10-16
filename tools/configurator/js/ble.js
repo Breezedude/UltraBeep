@@ -314,6 +314,11 @@ class BleFileClient {
     if (!line.startsWith("DONE")) throw new Error(`PUT ${name}: ${line}`);
   }
 
+  /* "Apply now": the device reloads the saved configuration at once (firmware 0.49). */
+  reloadConfig() {
+    return this.exclusive(() => this.request("RELOAD", ["OK"], 5000));
+  }
+
   /* The image sent as "update" is installed; the device resets and disconnects. */
   installUpdate() {
     return this.exclusive(() => this.request("UPDATE", ["OK"], 10000));
