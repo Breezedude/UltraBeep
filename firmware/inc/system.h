@@ -44,6 +44,8 @@ bool system_in_flight(void);
 bool system_second_link_allowed(void);
 /* The configurator saved new files and asks for them at once (BLE task); the system task reloads. */
 void system_request_config_reload(void);
+/* A clip in voices/custom was written or removed: the extension clips are looked up again. */
+void system_voice_clips_changed(void);
 /* Local time for a UTC time: the profile's offset, plus European summer time if automatic. */
 uint32_t system_local_unix(uint32_t utc);
 /* Double taps accepted since the start (configurator: live values). */

@@ -7,7 +7,7 @@
  *   node tools/configurator/tests/voicepack_test.js
  */
 const path = require("node:path");
-const { voicepackClips, voicepackText, voicepackInfo, VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION } = require(path.join(__dirname, "..", "js", "voicepack.js"));
+const { voicepackClips, voicepackText, voicepackInfo, voicepackExtension, VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION } = require(path.join(__dirname, "..", "js", "voicepack.js"));
 
 let failed = 0;
 const check = (ok, what) => {
@@ -35,10 +35,16 @@ check(voicepackText("de", "vario_sink_150") === "minus 1,5 Meter pro Sekunde" &&
 check(voicepackText("pt", "takeoff") === "Descolagem" && voicepackText("br", "takeoff") === "Decolagem" && voicepackText("br", "gps_ok") === "GPS ok",
   "the Brazilian variant overrides a few words and keeps the rest");
 
-check(VOICEPACK_EXTENSION.size === 7 && voicepackClips("de").filter((c) => !c.stock).length === 7 &&
-  voicepackClips("de").filter((c) => c.stock).length === voicepackClips("de").length - 7 &&
+const series = de.filter((c) => c.name.startsWith("g/"));
+check(VOICEPACK_EXTENSION.size === 7 && de.filter((c) => !c.stock).length === 7 + 101 &&
+  de.filter((c) => c.stock).length === de.length - 108 && series.every((c) => !c.stock) && voicepackExtension("g/g_23") &&
+  !voicepackExtension("al/al_1230") && !voicepackExtension("gps_ok") &&
   Object.keys(VOICEPACK_LANGUAGES).every((l) => [...VOICEPACK_EXTENSION].every((n) => voicepackText(l, n))),
-"the 7 extension clips are flagged and have texts in every language");
+"the 7 extension words and the 101 load factor clips are flagged and have texts in every language");
+check(series.length === 101 && series[0].name === "g/g_0" && series[100].name === "g/g_100" &&
+  voicepackText("de", "g/g_23") === "2,3 G" && voicepackText("de", "g/g_10") === "1 G" && voicepackText("en", "g/g_23") === "2.3 G" &&
+  voicepackText("us", "g/g_100") === "10 G" && voicepackText("fr", "g/g_5") === "0,5 G",
+"the load factor series: 0.0 to 10.0 g in tenths, with the language's decimal mark");
 
 const ids = VOICEPACKS.map((p) => p.id);
 check(new Set(ids).size === VOICEPACKS.length && VOICEPACKS.length === 24, `${VOICEPACKS.length} manufacturer packs, ids unique`);

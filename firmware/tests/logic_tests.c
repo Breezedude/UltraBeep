@@ -1885,6 +1885,19 @@ static void test_announce(void)
             strcmp(a.clip[7][2], "pause") == 0 && strcmp(a.clip[7][3], "vario_sink_400") == 0,
         "max climb, pause, sink: %s %s %s", a.clip[7][1], a.clip[7][2], a.clip[7][3]);
   CHECK(group_is(&a, 8, "8", "dot", "7"), "glide %s %s %s", a.clip[8][0], a.clip[8][1], a.clip[8][2]);
+  /* with the g/g_<tenths> series the load factor is one clip, above 10 g the last one */
+  in.g_series = true;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 3, "g_load", "g/g_23", NULL), "g-load series: %s %s", a.clip[3][0], a.clip[3][1]);
+  in.g_word = false;
+  in.g_load = 12.4f;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 3, "g/g_100", NULL, NULL), "g-load series above 10 g: %s", a.clip[3][0]);
+  in.g_load = 0.96f;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 3, "g/g_10", NULL, NULL), "g-load series rounds to tenths: %s", a.clip[3][0]);
+  in.g_series = false;
+  in.g_word = true;
   in.bank_deg = 31.0f;
   in.g_load = 0.0f;
   announce_build(&l, true, &in, &a);

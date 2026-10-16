@@ -467,7 +467,7 @@ static bool plain_name(const char *s, size_t len, size_t max)
 }
 
 /* "voices/custom/<name>.qoa" or "voices/custom/<folder>/<name>.qoa" with plain names: a user-made
- * voice clip (docs/ble-file-service.md); the folder is the clip's folder in the pack (al, sp, nav, time). */
+ * voice clip (docs/ble-file-service.md); the folder is the clip's folder in the pack (al, sp, nav, time, g). */
 static bool clip_file(const char *name)
 {
   static const char prefix[] = CUSTOM_REL "/";
@@ -948,6 +948,9 @@ static void handle_command(uint16_t handle, const uint8_t *data, uint16_t len)
       snprintf(path, sizeof(path), "0:/%s", name);
       bool ok = storage_remove(path);
       log_printf("BLE: delete %s: %s", name, ok ? "ok" : "not found");
+      if (ok) {
+        system_voice_clips_changed();
+      }
       status_send(ok ? "OK" : "ERR not found");
     }
   } else if (strcmp(cmd, "UPDATE") == 0) {
@@ -1104,7 +1107,8 @@ static void handle_put_data(uint16_t handle, const uint8_t *data, uint16_t len)
     status_send("ERR crc");
     return;
   }
-  if (strncmp(xf_path, "0:/" CUSTOM_REL "/", 17) == 0) {
+  bool clip = strncmp(xf_path, "0:/" CUSTOM_REL "/", 17) == 0;
+  if (clip) {
     storage_mkdir("0:/voices");
     storage_mkdir(CUSTOM_DIR);
     char dir[80];
@@ -1113,13 +1117,16 @@ static void handle_put_data(uint16_t handle, const uint8_t *data, uint16_t len)
     if (slash) {
       *slash = 0;
       if (strlen(dir) > strlen(CUSTOM_DIR)) {
-        storage_mkdir(dir); /* the clip's folder (al, sp, nav, time) */
+        storage_mkdir(dir); /* the clip's folder (al, sp, nav, time, g) */
       }
     }
   }
   bool ok = storage_write_text(xf_path, xfer_buf, xf_size);
   log_printf("BLE: received %s (%lu bytes in %lu ms) %s", xf_path, (unsigned long)xf_size,
              (unsigned long)(HAL_GetTick() - xf_start), ok ? "saved" : "NOT saved");
+  if (ok && clip) {
+    system_voice_clips_changed();
+  }
   if (ok && strcmp(xf_path, IF_FOUND_MASTER_PATH) == 0) {
     config_request_if_found_mirror(); /* the finder's copy in the top folder follows (system task) */
   }

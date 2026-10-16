@@ -233,7 +233,20 @@ static uint8_t ann_voice;
 static float climb_hist[CLIMB_AVG_S];
 static unsigned climb_i, climb_n;
 static thermal_t thermal;  /* circling, climb phases, wind and glide (thermal.c) */
-static int ext_words = -1; /* extension clips in the voice pack: bit 0 glide_ratio, 1 g_load, 2 bank_angle */
+/* extension clips in the voice pack or voices/custom: bit 0 glide_ratio, 1 g_load, 2 bank_angle, 3 the g/g_<tenths>
+ * series; -1: not looked up since the pack or the custom clips changed */
+static int ext_words = -1;
+
+void system_voice_clips_changed(void)
+{
+  ext_words = -1;
+}
+
+static void open_voice_pack(const char *lang)
+{
+  storage_open_voice_pack(lang);
+  ext_words = -1;
+}
 
 static const announce_config_t *ann_config(void)
 {
@@ -277,11 +290,13 @@ static void announce_input(announce_input_t *in)
   in->max_sink_ms = stats.sink_max_ms;
   if (ext_words < 0) {
     ext_words = (storage_voice_exists("glide_ratio") ? 1 : 0) | (storage_voice_exists("g_load") ? 2 : 0) |
-                (storage_voice_exists("bank_angle") ? 4 : 0);
+                (storage_voice_exists("bank_angle") ? 4 : 0) |
+                (storage_voice_exists("g/g_10") && storage_voice_exists("g/g_100") ? 8 : 0);
   }
   in->glide_word = (ext_words & 1) != 0;
   in->g_word = (ext_words & 2) != 0;
   in->bank_word = (ext_words & 4) != 0;
+  in->g_series = (ext_words & 8) != 0;
 }
 
 /* Replaces what is still to be spoken. */
@@ -827,7 +842,7 @@ static void power_on(bool melody, bool select_profile)
   sensors_start();           /* the vertical filter settles meanwhile */
   ble_enable();
   still_since = 0;
-  storage_open_voice_pack(config_get()->language);
+  open_voice_pack(config_get()->language);
   if (config_get()->rawlog && rawlog_start()) {
     log_device_settings();
   }
@@ -1119,7 +1134,7 @@ static void check_config_update(void)
     gps_start(GPS_START_AUTO);
   }
   if (strcmp(c->language, language) != 0) {
-    storage_open_voice_pack(c->language);
+    open_voice_pack(c->language);
   }
   flight_set_landing(&flight, c->landing_detect, c->landing_time_s);
   apply_takeoff_config();
@@ -1249,7 +1264,7 @@ static void announce_update_and_go_off(void)
   config_load(config_get());
   config_mirror_if_found();
   apply_uart_console();
-  storage_open_voice_pack(config_get()->language);
+  open_voice_pack(config_get()->language);
   sound_melody(ok ? MELODY_CONFIRM : MELODY_ERROR, ground_piezo());
   sound_say1(ok ? "update_ok" : "update_fail", ground_voice());
   for (int i = 0; i < 60 && (i < 3 || sound_busy()); i++) {

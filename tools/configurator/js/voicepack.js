@@ -27,6 +27,7 @@ const VOICEPACK_LANGUAGES = {
     ms: (v) => `${decimal(v, ",")} Meter pro Sekunde`,
     sink: (v) => `minus ${decimal(v, ",")} Meter pro Sekunde`,
     cms: (v) => `${v} Zentimeter pro Sekunde`,
+    g: (v) => `${decimal(v, ",")} G`,
     words: {
       "time/duration": "Flugzeit:", "time/time": "Uhrzeit:",
       "nav/wind_speed": "Windgeschwindigkeit", "nav/wind": "Windrichtung", "nav/heading": "Richtung",
@@ -75,6 +76,7 @@ const VOICEPACK_LANGUAGES = {
     ms: (v) => `${decimal(v, ".")} metres per second`,
     sink: (v) => `minus ${decimal(v, ".")} metres per second`,
     cms: (v) => `${v} centimetres per second`,
+    g: (v) => `${decimal(v, ".")} G`,
     words: {
       "time/duration": "Flight time:", "time/time": "Time:",
       "nav/wind_speed": "Wind speed", "nav/wind": "Wind direction", "nav/heading": "Heading",
@@ -122,6 +124,7 @@ const VOICEPACK_LANGUAGES = {
     ms: (v) => `${decimal(v, ",")} mètres par seconde`,
     sink: (v) => `moins ${decimal(v, ",")} mètres par seconde`,
     cms: (v) => `${v} centimètres par seconde`,
+    g: (v) => `${decimal(v, ",")} G`,
     words: {
       "time/duration": "Temps de vol :", "time/time": "Heure :",
       "nav/wind_speed": "Vitesse du vent", "nav/wind": "Direction du vent", "nav/heading": "Cap",
@@ -169,6 +172,7 @@ const VOICEPACK_LANGUAGES = {
     ms: (v) => (v === 1 ? "1 metro al secondo" : `${decimal(v, ",")} metri al secondo`),
     sink: (v) => (v === 1 ? "meno 1 metro al secondo" : `meno ${decimal(v, ",")} metri al secondo`),
     cms: (v) => `${v} centimetri al secondo`,
+    g: (v) => `${decimal(v, ",")} G`,
     words: {
       "time/duration": "Tempo di volo:", "time/time": "Ora:",
       "nav/wind_speed": "Velocità del vento", "nav/wind": "Direzione del vento", "nav/heading": "Direzione",
@@ -216,6 +220,7 @@ const VOICEPACK_LANGUAGES = {
     ms: (v) => (v === 1 ? "1 metro por segundo" : `${decimal(v, ",")} metros por segundo`),
     sink: (v) => (v === 1 ? "menos 1 metro por segundo" : `menos ${decimal(v, ",")} metros por segundo`),
     cms: (v) => `${v} centímetros por segundo`,
+    g: (v) => `${decimal(v, ",")} G`,
     words: {
       "time/duration": "Tiempo de vuelo:", "time/time": "Hora:",
       "nav/wind_speed": "Velocidad del viento", "nav/wind": "Dirección del viento", "nav/heading": "Rumbo",
@@ -263,6 +268,7 @@ const VOICEPACK_LANGUAGES = {
     ms: (v) => (v === 1 ? "1 metro por segundo" : `${decimal(v, ",")} metros por segundo`),
     sink: (v) => (v === 1 ? "menos 1 metro por segundo" : `menos ${decimal(v, ",")} metros por segundo`),
     cms: (v) => `${v} centímetros por segundo`,
+    g: (v) => `${decimal(v, ",")} G`,
     words: {
       "time/duration": "Tempo de voo:", "time/time": "Horas:",
       "nav/wind_speed": "Velocidade do vento", "nav/wind": "Direção do vento", "nav/heading": "Rumo",
@@ -310,6 +316,7 @@ const VOICEPACK_LANGUAGES = {
     ms: (v) => `${decimal(v, ",")} meter per seconde`,
     sink: (v) => `min ${decimal(v, ",")} meter per seconde`,
     cms: (v) => `${v} centimeter per seconde`,
+    g: (v) => `${decimal(v, ",")} G`,
     words: {
       "time/duration": "Vliegtijd:", "time/time": "Tijd:",
       "nav/wind_speed": "Windsnelheid", "nav/wind": "Windrichting", "nav/heading": "Koers",
@@ -415,10 +422,14 @@ function voicepackInfo(id) {
  * Clips the manufacturer's packs do not have: UltraBeep says them for its own features, so they have to be
  * generated (single files in voices/custom, or a pack built here). Checked against the stock de.ubpack
  * (973 clips). profile_custom_<n>, the own profile names, are extension clips too but live outside the
- * catalogue (the profile's voice line).
+ * catalogue (the profile's voice line). So are the clips of the folders in VOICEPACK_EXTENSION_FOLDERS:
+ * g/g_<tenths>, the load factor 0.0 to 10.0 g as one clip each ("2,3 G"), which the device says instead of
+ * "2" "dot" "3" from single numbers once voices/custom has them.
  */
 const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_to_confirm", "glide_ratio", "g_load",
   "bank_angle", "thermal_exit"]);
+const VOICEPACK_EXTENSION_FOLDERS = ["g"];
+const voicepackExtension = (name) => VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_FOLDERS.includes(name.split("/")[0]);
 
 /*
  * All clips of a language: [{name, text, stock}], name as the firmware asks for it ("al/al_1230", "takeoff");
@@ -429,7 +440,7 @@ const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_
 function voicepackClips(lang) {
   const L = VOICEPACK_LANGUAGES[lang] || VOICEPACK_LANGUAGES.en;
   const out = [];
-  const add = (name, text) => out.push({ name, text, stock: !VOICEPACK_EXTENSION.has(name) });
+  const add = (name, text) => out.push({ name, text, stock: !voicepackExtension(name) });
   for (let h = 0; h < 24; h++) add(`time/hour_${h}`, L.hour(h));
   for (let h = 0; h < 24; h++) add(`time/duration_${h}`, L.hours(h));
   for (let m = 0; m < 60; m++) add(`time/min_${m}`, L.minutes(m));
@@ -446,6 +457,8 @@ function voicepackClips(lang) {
   for (let c = 100; c <= 1050; c += 50) add(`vario_sink_${c}`, L.sink(c / 100));
   for (let c = 1150; c <= 1950; c += 100) add(`vario_sink_${c}`, L.sink(c / 100));
   for (const c of [5, 10, 15, 20, 30, 40, 50]) add(`settings_${c}`, L.cms(c));
+  /* the load factor in tenths of a g: the accelerometer measures to 8 g and is good to about 0.1 g */
+  for (let t = 0; t <= 100; t++) add(`g/g_${t}`, L.g(t / 10));
   for (const [name, text] of Object.entries(L.words)) add(name, text);
   return out;
 }
@@ -463,5 +476,6 @@ function voicepackSample() {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION };
+  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension, VOICEPACK_LANGUAGES,
+    VOICEPACKS, VOICEPACK_EXTENSION };
 }

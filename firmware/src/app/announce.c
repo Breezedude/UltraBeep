@@ -215,6 +215,8 @@ static void word(announcement_t *out, unsigned clip, const char *name)
   snprintf(out->clip[out->groups][clip], ANN_NAME, "%s", name);
 }
 
+#define G_SERIES_MAX 100 /* g/g_100: 10.0 g, above the 8 g the accelerometer measures */
+
 /* "<n> dot <tenth>" from a value in tenths; from 20 on whole numbers (the clips go to 60). */
 static unsigned tenths_clips(announcement_t *out, unsigned n, int v10)
 {
@@ -330,15 +332,21 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
     }
     put(out, n++, "al/al_%d", summary_altitude_clip(in->thermal_gain_m < 0.0f ? 0.0f : in->thermal_gain_m));
     break;
-  case ANN_MAXG:
+  case ANN_MAXG: {
     if (in->g_load <= 0.0f) {
       return false;
     }
     if (in->g_word) {
       word(out, n++, "g_load");
     }
-    n = tenths_clips(out, n, (int)(in->g_load * 10.0f + 0.5f));
+    int g10 = (int)(in->g_load * 10.0f + 0.5f);
+    if (in->g_series) {
+      put(out, n++, "g/g_%d", g10 > G_SERIES_MAX ? G_SERIES_MAX : g10); /* "2,3 G" in one go */
+    } else {
+      n = tenths_clips(out, n, g10);
+    }
     break;
+  }
   case ANN_BANK: {
     if (in->g_load <= 0.0f) {
       return false;
@@ -386,7 +394,7 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
 
 void announce_demo_input(announce_input_t *in)
 {
-  bool glide_word = in->glide_word, g_word = in->g_word, bank_word = in->bank_word;
+  bool glide_word = in->glide_word, g_word = in->g_word, bank_word = in->bank_word, g_series = in->g_series;
   memset(in, 0, sizeof(*in));
   in->in_flight = true;
   in->alt_m = 1234.0f;
@@ -416,6 +424,7 @@ void announce_demo_input(announce_input_t *in)
   in->glide_word = glide_word;
   in->g_word = g_word;
   in->bank_word = bank_word;
+  in->g_series = g_series;
 }
 
 void announce_build(const announce_list_t *l, bool ble_connected, const announce_input_t *in, announcement_t *out)

@@ -558,7 +558,7 @@ function renderVoicepack() {
   const stockNote = el("p", { class: "sub" }, "");
   const extGen = el("button", { type: "button", title: "Generate the missing extension clips" }, "Generate");
   const extSend = el("button", { type: "button", title: "Send the generated extension clips to the device (voices/custom)" }, "Send to device");
-  /* number series ("al/al_-100 … al/al_7000", the hours, the speeds) fold into one row each; the words come first */
+  /* number series ("al/al_-100 … al/al_7000", the hours, the speeds, the load factors) fold into one row each; the words come first */
   const expanded = new Set();
   const clipRow = (c) => el("tr", { class: G.has(c.name) ? "done" : "" },
     el("td", { class: "mono" }, c.name),
@@ -576,6 +576,34 @@ function renderVoicepack() {
     return m ? m[1] : null;
   };
   const matches = (c, q) => c.name.includes(q) || textFor(c.name).toLowerCase().includes(q);
+  /* the rows of a table: its words, then one row per number series (opened: its clips); {rows, words, series} */
+  const folded = (clips) => {
+    const groups = new Map();
+    for (const c of clips) {
+      const k = seriesKey(c.name);
+      if (k) (groups.get(k) || groups.set(k, []).get(k)).push(c);
+    }
+    /* a series: at least four clips whose texts begin with a number or a minus ("23 Uhr", "ore 14", "minus 1,5 ..."), not words like vol_1 */
+    const numeric = (list) => list.length >= 4 && list.every((c) => /^(-|minus |moins |meno |menos |min |ore )?\d/i.test(c.text));
+    const words = clips.filter((c) => { const k = seriesKey(c.name); return !k || !numeric(groups.get(k)); });
+    const series = [...groups.entries()].filter(([, list]) => numeric(list));
+    const rows = words.map(clipRow);
+    for (const [key, list] of series) {
+      const have = list.filter((c) => G.has(c.name)).length;
+      /* extension clips: how many voices/custom on the device has */
+      const sent = deviceClient() && list[0].stock === false ? list.filter((c) => deviceClips.has(c.name)).length : 0;
+      const open = expanded.has(key);
+      rows.push(el("tr", { class: "group" + (have === list.length ? " done" : "") },
+        el("td", { class: "mono" }, el("button", { class: "fold", type: "button", "aria-expanded": String(open),
+          onclick: () => { if (open) expanded.delete(key); else expanded.add(key); renderCatalogue(); } }, open ? "▾" : "▸"),
+        ` ${list[0].name} … ${list[list.length - 1].name}`),
+        el("td", {}, `${list.length} clips: "${list[0].text}" … "${list[list.length - 1].text}"`),
+        el("td", { class: "actions" }, el("span", { class: "unit" },
+          [have ? `${have} of ${list.length} generated` : "", sent ? `${sent} on the device` : ""].filter(Boolean).join(" · ")))));
+      if (open) rows.push(...list.map(clipRow));
+    }
+    return { rows, words, series };
+  };
   const renderCatalogue = () => {
     const q = filter.value.trim().toLowerCase();
     const all = voicepackClips(catalogLang);
@@ -583,7 +611,7 @@ function renderVoicepack() {
     const stock = all.filter((c) => c.stock !== false);
     /* the extension clips */
     const extShown = q ? ext.filter((c) => matches(c, q)) : ext;
-    extBody.replaceChildren(...extShown.map(clipRow));
+    extBody.replaceChildren(...(q ? extShown.map(clipRow) : folded(ext).rows));
     const extDone = ext.filter((c) => G.has(c.name)).length;
     const extOnDevice = ext.filter((c) => deviceClips.has(c.name)).length;
     extNote.textContent = (q ? `${extShown.length} of ${ext.length} match; ` : "") +
@@ -600,29 +628,9 @@ function renderVoicepack() {
         : `${rows.length} of ${stock.length} match.`;
       return;
     }
-    const groups = new Map();
-    for (const c of stock) {
-      const k = seriesKey(c.name);
-      if (k) (groups.get(k) || groups.set(k, []).get(k)).push(c);
-    }
-    /* a series: at least four clips whose texts begin with a number or a minus ("23 Uhr", "ore 14", "minus 1,5 ..."), not words like vol_1 */
-    const numeric = (list) => list.length >= 4 && list.every((c) => /^(-|minus |moins |meno |menos |min |ore )?\d/i.test(c.text));
-    const singles = stock.filter((c) => { const k = seriesKey(c.name); return !k || !numeric(groups.get(k)); });
-    const series = [...groups.entries()].filter(([, list]) => numeric(list));
-    const rows = singles.map(clipRow);
-    for (const [key, list] of series) {
-      const have = list.filter((c) => G.has(c.name)).length;
-      const open = expanded.has(key);
-      rows.push(el("tr", { class: "group" + (have === list.length ? " done" : "") },
-        el("td", { class: "mono" }, el("button", { class: "fold", type: "button", "aria-expanded": String(open),
-          onclick: () => { if (open) expanded.delete(key); else expanded.add(key); renderCatalogue(); } }, open ? "▾" : "▸"),
-        ` ${list[0].name} … ${list[list.length - 1].name}`),
-        el("td", {}, `${list.length} clips: "${list[0].text}" … "${list[list.length - 1].text}"`),
-        el("td", { class: "actions" }, el("span", { class: "unit" }, have ? `${have} of ${list.length} generated` : ""))));
-      if (open) rows.push(...list.map(clipRow));
-    }
+    const { rows, words, series } = folded(stock);
     stockBody.replaceChildren(...rows);
-    stockNote.textContent = `${singles.length} words and ${series.length} number series (${stock.length} clips) in ` +
+    stockNote.textContent = `${words.length} words and ${series.length} number series (${stock.length} clips) in ` +
       `${textsName}${canGenerate ? "" : ` (no ${packName} texts yet)`}.`;
   };
   filter.addEventListener("input", renderCatalogue);
@@ -632,7 +640,8 @@ function renderVoicepack() {
     el("thead", {}, el("tr", {}, el("th", {}, "Clip"), el("th", {}, "Text"), el("th", {}, ""))), body));
   const catalogueCard = fieldset({ title: "Clips", help: "What a voice pack has and what it says in the language of the " +
       "pack chosen above, in two tables: the clips UltraBeep adds - the original packs do not have them: the launch " +
-      "readiness, the pairing request, glide ratio, load and bank in the announcements; generate them and send them to " +
+      "readiness, the pairing request, glide ratio, load and bank in the announcements, the load factor as one clip per " +
+      "tenth of a g (said instead of single numbers once the device has them); generate them and send them to " +
       "the device, or build a whole pack - and the clips of the original pack. The filter works in both. ▶ plays a clip " +
       "the device has (the pack's, or one sent to voices/custom), ♪ a clip generated here, ✎ opens it in the editor." },
   customRow("Filter", filter),

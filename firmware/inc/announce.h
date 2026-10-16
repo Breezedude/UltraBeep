@@ -28,7 +28,7 @@ typedef enum {
   ANN_TONE,         /* the signal tone on the piezo (MELODY_THERMAL_EXIT), no clips */
   ANN_THERMALCLIMB, /* vario_lift_<cm/s>: mean climb since the circling began */
   ANN_THERMALGAIN,  /* al/al_<m>: height gained since the circling began */
-  ANN_MAXG,         /* [g_load] <n> dot <tenth>: peak load factor */
+  ANN_MAXG,         /* [g_load] g/g_<tenths> (without that series: <n> dot <tenth>): peak load factor */
   ANN_BANK,         /* [bank_angle] <deg>: bank of a coordinated turn at that load */
   ANN_MAXALTITUDE,  /* altitude_max al/al_<m> (flight summary) */
   ANN_MAXSPEED,     /* speed_max sp/sp_<km/h> */
@@ -131,6 +131,7 @@ typedef struct {
   float max_climb_ms;
   float max_sink_ms;      /* positive */
   bool glide_word, g_word, bank_word; /* extension clips glide_ratio, g_load, bank_angle in the voice pack */
+  bool g_series;          /* extension clips g/g_0 ... g/g_100: the load factor as one clip per tenth */
 } announce_input_t;
 
 #define ANN_CLIPS  4

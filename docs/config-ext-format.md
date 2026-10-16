@@ -163,7 +163,8 @@ Other values round to the nearest step (30 → 40, 10 → 20).
   * **Extension clips** - the clips UltraBeep says that the manufacturer's packs do not have (the
     configurator's Voice view lists them in their own table and generates and sends them as a group): `ready` and
     `wait_for_takeoff` (the launch readiness below), `press_button_to_confirm` (the pairing request),
-    `glide_ratio`, `g_load` and `bank_angle` (the announcement blocks), `thermal_exit`, and the
+    `glide_ratio`, `g_load` and `bank_angle` (the announcement blocks), `thermal_exit`, the load factor
+    series `g/g_0` … `g/g_100` (0.0 to 10.0 g in tenths, one clip each: "2,3 G", since 0.52), and the
     profiles' voice lines (`identity_voiceclip_string`). Everything else the firmware says is in the stock packs.
 
 ## If found
@@ -205,7 +206,8 @@ keys stay where they are (profiles 1–3 in `config.ultrabip`), so BipLink chang
 Blocks: `altitude`, `climbrate` (10 s mean), `speed`, `heading`, `duration` (flight time), `time`
 (local time of day), `wind`, `glide` (glide ratio), `battery`, `tone` (the falling three-tone
 signal, no voice), `thermalclimb` (mean climb since the circling began), `thermalgain` (height
-gained since then), `maxg` (peak load factor of the flight or the manoeuvre, "2 dot 3"), `bank`
+gained since then), `maxg` (peak load factor of the flight or the manoeuvre: the one clip `g/g_23` when
+the device has that series, else "2 dot 3" from single numbers), `bank`
 (bank angle of a coordinated turn at that load, degrees), and for the summary `maxaltitude`,
 `maxspeed`, `maxclimb` (max climb, a short pause, then the max sink as a negative number).
 Blocks without data (no fix, no wind estimate yet, flight time before the takeoff) are left out.
@@ -233,7 +235,10 @@ Details of the triggers (firmware/src/app/announce.c):
   flight with a fix and at least 0.3 m/s sink, else that block is left out and the others are said.
 * `wingover` speaks 2 s after the manoeuvre ended; `maxg` and `bank` are its values, in the
   summary `maxg` is the peak of the flight. Extension clips `g_load` and `bank_angle` (like
-  `glide_ratio`) are said first when the voice pack has them.
+  `glide_ratio`) are said first when the voice pack has them. `maxg` takes the series `g/g_<tenths>`
+  when `g/g_10` and `g/g_100` are there (above 10 g: `g/g_100`; the accelerometer measures to 8 g).
+  The device looks the extension clips up again when the voice pack changes or a clip in
+  `voices/custom` is sent or deleted over Bluetooth (0.52).
 * A list holds up to 10 blocks, each once.
 
 ### Details
