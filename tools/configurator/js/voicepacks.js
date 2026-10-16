@@ -44,7 +44,10 @@ async function writePackToCard(dir, id, bytes) {
   return !!before;
 }
 
-const providerLabel = (voice) => (homeVoice(voice) ? "home server" : "Microsoft Edge");
+/* a voice no service here speaks: the pack was made with another tool ("google:de-DE-Chirp3-HD") */
+const externalVoice = (voice) => /^[a-z]+:/.test(voice || "") && !homeVoice(voice);
+const providerLabel = (voice) => (homeVoice(voice) ? "home server" : /^google:/.test(voice || "") ? "Google Cloud TTS"
+  : externalVoice(voice) ? "made elsewhere" : "Microsoft Edge");
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 function renderVoice() {
@@ -78,18 +81,14 @@ function renderVoice() {
     busy = false;
   };
 
+  /* the pack's own clips of the sample sentences, as the device will play them */
   const sample = (p) => async (say) => {
-    const full = await fetchPack(p.id);
-    const settings = { ...TTS_DEFAULTS, ...full.settings, voice: full.voice };
-    const names = voicepackSample();
-    const clips = [];
-    for (let i = 0; i < names.length; i++) {
-      say(`${i + 1} of ${names.length} …`);
-      const text = full.overrides[names[i]] || voicepackText(textLang, names[i]);
-      clips.push((await generateClip(text, settings, 1, 5, { onWait: (s) => say(`the home server is at it, again in ${s} s …`) })).bytes);
-    }
+    say("loading …");
+    const [full, clips] = await Promise.all([fetchPack(p.id), fetchPackClips(p.id, voicepackSample())]);
+    const names = voicepackSample().filter((n) => clips[n]);
+    if (!names.length) throw new Error("This pack has none of the sample sentences.");
     say(`"${names.map((n) => full.overrides[n] || voicepackText(textLang, n)).join(" · ")}"`);
-    playClips(clips);
+    playClips(names.map((n) => clips[n]));
   };
   const fetchFile = async (p, say) => {
     const bytes = await downloadPack(p.id, (got, total) => say(`${mb(got)} of ${mb(total || p.size)} …`));
@@ -112,7 +111,9 @@ function renderVoice() {
     const full = await fetchPack(p.id);
     savePackDraft(packId, { base: p.id, baseName: p.name, overrides: full.overrides });
     const s = ttsSettings();
-    Object.assign(s, full.settings, { voice: full.voice, locale: "" });
+    Object.assign(s, full.settings);
+    /* a pack made elsewhere ("google:...") brings its texts and sound, not its voice */
+    if (!externalVoice(full.voice)) Object.assign(s, { voice: full.voice, locale: "" });
     saveTtsSettings(s);
     state.view = "voicepack";
     render();
@@ -138,7 +139,8 @@ function renderVoice() {
         b("▶", "Hear its sample sentences", sample(p)),
         b("⬇", `Download as ${packId}.ubpack`, download(p)),
         onCard ? b("SD", `Write it to the SD card as voices/${packId}.ubpack`, toCard(p)) : null,
-        b("✎", "Start your own pack from this one (Custom voicepack)", asStart(p))));
+        b("✎", externalVoice(p.voice) ? "Start your own pack from this one's texts and sound (its voice is not offered here)"
+          : "Start your own pack from this one (Custom voicepack)", asStart(p))));
   };
   fetchPacks(packId).then((list) => {
     body.replaceChildren(stockRow, ...list.map(packRow));

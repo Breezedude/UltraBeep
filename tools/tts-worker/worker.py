@@ -17,6 +17,8 @@ worker answers from its disk cache or synthesizes with Chatterbox in a process p
   worker -> relay  {"type": "pack_stored", "id", "done", "size", "sha256"}
   relay -> worker  {"type": "pack_read", "id", "pack", "offset", "length"}
   worker -> relay  {"type": "pack_data", "id", "data": base64, "size"}
+  relay -> worker  {"type": "pack_sample", "id", "pack", "paths": ["voices/takeoff.qoa", ...]}
+  worker -> relay  {"type": "pack_clips", "id", "clips": {path: base64}}
   relay -> worker  {"type": "pack_delete", "id", "pack"}
   worker -> relay  {"type": "pack_deleted", "id", "deleted"}
   worker -> relay  {"type": "error", "id", "status", "message"}   (400 bad input, 404 not found, 409, 500)
@@ -194,6 +196,12 @@ class Worker:
                                              int(msg.get("length", 2**20)))
         await self.send({"type": "pack_data", "id": msg["id"], "size": size, "data": base64.b64encode(data).decode()})
 
+    async def pack_sample(self, msg):
+        paths = [str(p) for p in (msg.get("paths") or [])][:20]
+        clips = await asyncio.to_thread(self.packs.clips, msg.get("pack"), paths)
+        await self.send({"type": "pack_clips", "id": msg["id"],
+                         "clips": {p: base64.b64encode(b).decode() for p, b in clips.items()}})
+
     async def pack_delete(self, msg):
         deleted = await asyncio.to_thread(self.packs.delete, msg.get("pack"))
         log.info("pack %s %s", msg.get("pack"), "deleted" if deleted else "to delete not found")
@@ -201,7 +209,8 @@ class Worker:
 
     async def handle(self, msg):
         kinds = {"speak": self.speak, "clone": self.clone, "forget": self.forget, "publish": self.publish,
-                 "pack_put": self.pack_put, "pack_read": self.pack_read, "pack_delete": self.pack_delete}
+                 "pack_put": self.pack_put, "pack_read": self.pack_read, "pack_sample": self.pack_sample,
+                 "pack_delete": self.pack_delete}
         try:
             await kinds[msg["type"]](msg)
         except PackError as e:

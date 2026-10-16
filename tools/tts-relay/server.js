@@ -10,6 +10,7 @@
  *   DELETE /v1/voices/own/<id>                                     -> {"deleted"}
  *   POST   /v1/voices/public  {"voice_id", "name", "locale", ...}  -> {"voice"}: an own voice for everyone
  *   GET    /v1/packs?lang=de, GET /v1/packs/<id>, GET /v1/packs/<id>/file   shared voice packs
+ *   GET    /v1/packs/<id>/sample?names=takeoff,al/al_1230          clips out of a pack (base64 QOA)
  *   POST   /v1/packs, PUT /v1/packs/<id>/file?part=&parts=          publishing one (packs.js)
  *   GET|DELETE /v1/admin/packs[/<id>]  (Authorization: Bearer ADMIN_TOKEN)   the operator's
  *   GET    /v1/worker  (WebSocket, Authorization: Bearer WORKER_SECRET): a worker's connection
@@ -634,6 +635,25 @@ async function packDownload(req, res, id) {
   }
 }
 
+/* Some clips out of a pack, by catalogue name ("takeoff", "al/al_1230"): {clips: {name: base64 QOA}}.
+ * Its sample sentences, heard as they are in the pack, whatever voice made it. */
+async function packSample(res, id, url) {
+  const pack = packs.get(id);
+  if (!pack || pack.state !== "ready") return fail(res, 404, "no such pack");
+  const names = String(url.searchParams.get("names") || "").split(",").filter((n) => CLIP_NAME_RE.test(n)).slice(0, 20);
+  if (!names.length) return fail(res, 400, "names: clip names, comma-separated");
+  const path = (n) => (n.includes("/") ? `${n}.qoa` : `voices/${n}.qoa`);
+  try {
+    const r = await ask({ type: "pack_sample", pack: id, paths: names.map(path) });
+    const clips = {};
+    for (const n of names) if (r.clips && r.clips[path(n)]) clips[n] = r.clips[path(n)];
+    return send(res, 200, { clips });
+  } catch (e) {
+    return fail(res, e.status || 502, e.message);
+  }
+}
+const CLIP_NAME_RE = /^([a-z0-9_]{1,8}\/)?[a-z0-9_-]{1,32}$/;
+
 const packSummary = (p) => ({ id: p.id, lang: p.lang, name: p.name, voice: p.voice, voice_label: p.voice_label, clips: p.clips,
   size: p.size, created: p.created, downloads: p.downloads, base: p.base, settings: p.settings,
   changed_texts: Object.keys(p.overrides || {}).length });
@@ -677,8 +697,9 @@ const server = http.createServer(async (req, res) => {
     if (m === "DELETE" && own) return await ownVoiceDelete(res, ip, own[1]);
     if (m === "GET" && p === "/v1/packs") return send(res, 200, { packs: packs.list(url.searchParams.get("lang") || "").map(packSummary) });
     if (m === "POST" && p === "/v1/packs") return await packCreate(req, res, ip);
-    const pk = /^\/v1\/packs\/([a-z0-9]+)(\/file)?$/.exec(p);
+    const pk = /^\/v1\/packs\/([a-z0-9]+)(\/file|\/sample)?$/.exec(p);
     if (pk && PACK_ID_RE.test(pk[1])) {
+      if (m === "GET" && pk[2] === "/sample") return await packSample(res, pk[1], url);
       if (m === "GET" && pk[2]) return await packDownload(req, res, pk[1]);
       if (m === "PUT" && pk[2]) return await packPart(req, res, pk[1], url);
       const pack = packs.get(pk[1]);

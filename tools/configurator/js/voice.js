@@ -153,6 +153,13 @@ async function serviceJson(path, init) {
 const fetchPacks = (lang) => serviceJson(`/v1/packs?lang=${encodeURIComponent(lang)}`).then((r) => r.packs);
 /* One pack with its changed texts: {..., overrides: {clip: text}}. */
 const fetchPack = (id) => serviceJson(`/v1/packs/${id}`);
+/* Clips out of a shared pack, as they are in it: {name: QOA bytes} for the catalogue names it has. */
+async function fetchPackClips(id, names) {
+  const { clips } = await serviceJson(`/v1/packs/${id}/sample?names=${names.map(encodeURIComponent).join(",")}`);
+  const out = {};
+  for (const [name, b64] of Object.entries(clips)) out[name] = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return out;
+}
 
 /* A pack's .ubpack bytes; onProgress(received, total). */
 async function downloadPack(id, onProgress) {

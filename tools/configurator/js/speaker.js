@@ -28,6 +28,98 @@ function saveSpeakerSettings(s) {
   try { localStorage.setItem(SPEAKER_STORAGE, JSON.stringify(keep)); } catch (e) { /* page only */ }
 }
 
+/*
+ * The recording outlives the view that started it: a redraw (a Bluetooth disconnect or reconnect
+ * redraws the page) keeps it going, and leaving the view stops it but keeps it to send or download.
+ * The functions below work on whatever Custom speaker view is on screen now (spEl, by id).
+ */
+const speakerSession = { recording: null, t0: 0, left: false, wav: null, unsent: false, consent: false, busy: false,
+  offline: false, status: "" };
+const spEl = (id) => document.getElementById(`sp-${id}`);
+
+function speakerStatus(text) {
+  speakerSession.status = text;
+  const s = spEl("rec-status");
+  if (s) s.textContent = text;
+}
+
+/* Buttons and steps as the session stands; steps 2 and 3 stay greyed out until there is a recording voice. */
+function speakerRefresh() {
+  const ss = speakerSession;
+  const id = ownVoiceId(ttsSettings());
+  const rec = spEl("rec"), open = spEl("open"), send = spEl("send"), dl = spEl("dl"), del = spEl("del");
+  if (rec) {
+    rec.textContent = ss.recording ? `■ Stop (${Math.round((Date.now() - ss.t0) / 1000)} s)` : "● Record";
+    rec.disabled = !ss.recording && (ss.busy || ss.offline);
+  }
+  if (open) open.disabled = !!ss.recording || ss.busy || ss.offline;
+  if (send) { send.hidden = !ss.unsent; send.disabled = ss.busy || ss.offline; }
+  if (dl) dl.disabled = !ss.wav;
+  if (del) del.hidden = !id;
+  for (const card of [spEl("try"), spEl("publish")]) {
+    if (!card) continue;
+    card.disabled = !id || ss.offline;
+    card.classList.toggle("inactive", card.disabled);
+  }
+  const status = spEl("rec-status");
+  if (status && !ss.status && id) status.textContent = "Your recording voice is on the voice server: try it below.";
+}
+
+async function speakerRecord() {
+  const ss = speakerSession;
+  const rec = await startRecording(OWN_MAX_S);
+  Object.assign(ss, { recording: rec, t0: Date.now(), left: false });
+  speakerStatus(`Recording: read the text above, then stop (after ${OWN_MAX_S} s it stops by itself).`);
+  const tick = setInterval(speakerRefresh, 250);
+  speakerRefresh();
+  rec.done.then((encoded) => {
+    clearInterval(tick);
+    ss.recording = null;
+    speakerTake(encoded, !ss.left); /* stopped by leaving the view: kept, not sent */
+  });
+}
+
+/* A recording or an opened file: converted to WAV here and kept (for the download), sent when `send`. */
+async function speakerTake(encoded, send) {
+  const ss = speakerSession;
+  ss.busy = true;
+  speakerRefresh();
+  speakerStatus("Converting …");
+  try {
+    const wav = await recordingToWav(encoded);
+    if (wav.seconds < 6) throw new Error(`The recording has ${wav.seconds.toFixed(1)} s of sound; 10 to 15 s are needed.`);
+    Object.assign(ss, { wav, unsent: true, busy: false });
+    if (send) return await speakerSend(wav);
+    speakerStatus(`Your recording (${wav.seconds.toFixed(0)} s) is kept here but not sent yet: "Send it" makes your voice ` +
+      "from it, or download it.");
+  } catch (e) {
+    speakerStatus(e.name === "EncodingError" ? "The browser cannot read this file as audio." : e.message);
+  }
+  ss.busy = false;
+  speakerRefresh();
+}
+
+async function speakerSend(wav) {
+  const ss = speakerSession;
+  ss.busy = true;
+  speakerRefresh();
+  speakerStatus(`Sending ${wav.seconds.toFixed(0)} s; the voice server makes the voice from it (a few seconds) …`);
+  try {
+    const made = await createOwnVoice(wav.bytes);
+    const t = ttsSettings();
+    const old = ownVoiceId(t);
+    t.own = made.id;
+    saveTtsSettings(t);
+    if (old && old !== made.id) deleteOwnVoice(old).catch(() => { /* gone already */ });
+    ss.unsent = false;
+    speakerStatus(`Your recording voice is ready (${made.seconds} s of speech used): try it below.`);
+  } catch (e) {
+    speakerStatus(e.message);
+  }
+  ss.busy = false;
+  speakerRefresh();
+}
+
 /* The catalogue language (js/voicepack.js) whose texts fit a locale, or null. */
 function textLanguageFor(locale) {
   const exact = VOICEPACKS.find((p) => p.lang && p.tts === locale);
@@ -38,108 +130,71 @@ function textLanguageFor(locale) {
 function renderSpeaker() {
   leaveView();
   const main = $("main");
-  const tts = ttsSettings();
   const sp = speakerSettings();
   const pack = voicepackInfo(systemValue("system_language_string") || "de");
+  const ss = speakerSession;
   let catalog = { voices: [], own: { available: false, languages: [] } };
   let entry = null; /* the last clip: raw audio, rebuilt live with pitch, rate and band-pass */
 
-  /* ---- 1. the recording ---- */
-  const recStatus = el("p", { class: "sub voice-status" }, "");
-  const consent = el("input", { type: "checkbox", id: `own-consent-${++uid}` });
-  const recBtn = el("button", { type: "button" }, "● Record");
+  /* ---- 1. the recording (its state lives in speakerSession: a redraw of the view keeps it) ---- */
+  const recStatus = el("p", { class: "sub voice-status", id: "sp-rec-status" }, ss.status);
+  const consent = el("input", { type: "checkbox", id: "sp-consent" });
+  consent.checked = ss.consent;
+  consent.addEventListener("change", () => { ss.consent = consent.checked; });
+  const recBtn = el("button", { type: "button", id: "sp-rec" }, "● Record");
   const fileInput = el("input", { type: "file", accept: "audio/*", hidden: true });
-  const openBtn = el("button", { type: "button" }, "Open a recording …");
-  const delBtn = el("button", { type: "button" }, "Delete my recording voice");
-  const dlBtn = el("button", { type: "button", disabled: true, title: "The recording as sent (WAV): open it here again later; " +
-    "it is kept nowhere else" }, "⬇ Download my recording");
-  let lastWav = null; /* the recording as sent, for the download */
-  let offline = false;
+  const openBtn = el("button", { type: "button", id: "sp-open" }, "Open a recording …");
+  const sendBtn = el("button", { type: "button", id: "sp-send", class: "primary", hidden: true }, "Send it");
+  const dlBtn = el("button", { type: "button", id: "sp-dl", title: "The recording as converted here (WAV): open it here again " +
+    "later; it is kept nowhere else" }, "⬇ Download my recording");
+  const delBtn = el("button", { type: "button", id: "sp-del" }, "Delete my recording voice");
   const readAloud = el("p", { class: "sub" }, "");
-  const ownId = () => ownVoiceId(tts);
-  /* steps 2 and 3 stay greyed out until there is a recording voice */
-  const refreshOwn = () => {
-    const ready = !!ownId() && !offline;
-    delBtn.hidden = !ownId();
-    if (!recStatus.textContent) recStatus.textContent = ownId() ? "Your recording voice is on the voice server: try it below." : "";
-    for (const card of [tryCard, publishCard]) {
-      card.disabled = !ready;
-      card.classList.toggle("inactive", !ready);
-    }
-  };
-  let left = false; /* the view was left: a recording stopped by that is not sent */
-  const sendOwn = async (encoded) => {
-    if (left) return;
-    if (!consent.checked) { recStatus.textContent = "Tick the box first: only your own voice, or one you may use."; return; }
-    recBtn.disabled = openBtn.disabled = true;
-    try {
-      recStatus.textContent = "Converting …";
-      const wav = await recordingToWav(encoded);
-      if (wav.seconds < 6) throw new Error(`The recording has ${wav.seconds.toFixed(1)} s of sound; 10 to 15 s are needed.`);
-      lastWav = wav.bytes;
-      dlBtn.disabled = false;
-      recStatus.textContent = `Sending ${wav.seconds.toFixed(0)} s; the voice server makes the voice from it (a few seconds) …`;
-      const made = await createOwnVoice(wav.bytes);
-      const old = ownId();
-      tts.own = made.id;
-      saveTtsSettings(tts);
-      if (old && old !== made.id) deleteOwnVoice(old).catch(() => { /* gone already */ });
-      recStatus.textContent = `Your recording voice is ready (${made.seconds} s of speech used): try it below.`;
-      entry = null;
-    } catch (e) {
-      recStatus.textContent = e.name === "EncodingError" ? "The browser cannot read this file as audio." : e.message;
-    }
-    recBtn.disabled = openBtn.disabled = false;
-    refreshOwn();
-  };
-  let recording = null;
+  const needConsent = () => { speakerStatus("Tick the box first: only your own voice, or one you may use."); return false; };
   recBtn.addEventListener("click", async () => {
-    if (recording) { recording.stop(); return; }
-    if (!consent.checked) { recStatus.textContent = "Tick the box first: only your own voice, or one you may use."; return; }
+    if (ss.recording) { ss.recording.stop(); return; }
+    if (!consent.checked) return needConsent();
     try {
-      recording = await startRecording(OWN_MAX_S);
+      await speakerRecord();
     } catch (e) {
-      recStatus.textContent = `No microphone: ${e.message}`;
-      return;
+      speakerStatus(`No microphone: ${e.message}`);
     }
-    const t0 = Date.now();
-    const tick = setInterval(() => { recBtn.textContent = `■ Stop (${Math.round((Date.now() - t0) / 1000)} s)`; }, 250);
-    recStatus.textContent = `Recording: read the text above, then stop (after ${OWN_MAX_S} s it stops by itself).`;
-    recording.done.then((encoded) => {
-      clearInterval(tick);
-      recBtn.textContent = "● Record";
-      recording = null;
-      sendOwn(encoded);
-    });
   });
   openBtn.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", async () => {
     const f = fileInput.files[0];
     fileInput.value = "";
-    if (f) sendOwn(await f.arrayBuffer());
+    if (!f) return;
+    if (!consent.checked) return needConsent();
+    speakerTake(await f.arrayBuffer(), true);
   });
+  sendBtn.addEventListener("click", () => {
+    if (!consent.checked) return needConsent();
+    if (ss.wav) speakerSend(ss.wav);
+  });
+  dlBtn.addEventListener("click", () => { if (ss.wav) downloadBytes("my-voice-recording.wav", ss.wav.bytes); });
   delBtn.addEventListener("click", async () => {
-    if (!ownId() || !window.confirm("Delete your recording voice on the voice server? Templates made from it stay.")) return;
+    const id = ownVoiceId(ttsSettings());
+    if (!id || !window.confirm("Delete your recording voice on the voice server? Templates made from it stay.")) return;
     try {
-      const was = await deleteOwnVoice(ownId());
-      tts.own = "";
-      if (OWN_VOICE_RE.test(tts.voice || "")) tts.voice = "";
-      saveTtsSettings(tts);
-      entry = null;
-      recStatus.textContent = was ? "Your recording voice is deleted." : "The voice server did not have it anymore.";
+      const was = await deleteOwnVoice(id);
+      const t = ttsSettings();
+      t.own = "";
+      if (OWN_VOICE_RE.test(t.voice || "")) t.voice = "";
+      saveTtsSettings(t);
+      speakerStatus(was ? "Your recording voice is deleted." : "The voice server did not have it anymore.");
     } catch (e) {
-      recStatus.textContent = e.message;
+      speakerStatus(e.message);
     }
-    refreshOwn();
+    speakerRefresh();
   });
-  dlBtn.addEventListener("click", () => { if (lastWav) downloadBytes("my-voice-recording.wav", lastWav); });
   const recordCard = fieldset({ title: "1. Your recording", help: "10 to 15 s of you reading calmly, in a quiet room, in " +
       "the language the voice shall speak - every recording program works (WAV or FLAC at 44.1/48 kHz is best; a phone's " +
       "voice memo works too). It becomes a voice only you can use until you make it a template below. The voice server " +
       "keeps no recording: download it to open it here again later." },
   readAloud,
   el("label", { class: "consent", for: consent.id }, consent, " This is my own voice, or the speaker has allowed me to use it."),
-  el("div", { class: "buttons" }, recBtn, openBtn, fileInput, dlBtn, delBtn), recStatus);
+  el("div", { class: "buttons" }, recBtn, openBtn, fileInput, sendBtn, dlBtn, delBtn), recStatus);
+  const ownId = () => ownVoiceId(ttsSettings()); /* read anew each time: a recording sent meanwhile counts */
 
   /* ---- 2. trying it ---- */
   const localeSel = el("select", { "aria-label": "Language" });
@@ -168,8 +223,10 @@ function renderSpeaker() {
     genBtn.disabled = true;
     tryStatus.textContent = "Generating …";
     try {
-      entry = await generateClip(text, { ...TTS_DEFAULTS, ...audio(), voice: ownVoiceName(localeSel.value, ownId()) }, 1, 5,
+      const voiceId = ownId();
+      entry = await generateClip(text, { ...TTS_DEFAULTS, ...audio(), voice: ownVoiceName(localeSel.value, voiceId) }, 1, 5,
         { settings: chatter(), onWait: (s) => { tryStatus.textContent = `The voice server is still at it, asking again in ${s} s …`; } });
+      entry.voiceId = voiceId;
       const b = buildClip(entry, audio());
       /* the text as the model got it (numbers as words), and "cached" for a clip that came back too fast to be made */
       tryStatus.textContent = `"${text}"${entry.spoken && entry.spoken !== text ? ` → "${entry.spoken}"` : ""}, ` +
@@ -184,10 +241,12 @@ function renderSpeaker() {
   };
   genBtn.addEventListener("click", generate);
   textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") generate(); });
-  againBtn.addEventListener("click", () => entry && playClip(buildClip(entry, audio()).bytes));
+  /* a clip of a recording voice replaced meanwhile is made anew */
+  const current = () => entry && entry.voiceId === ownId();
+  againBtn.addEventListener("click", () => (current() ? playClip(buildClip(entry, audio()).bytes) : generate()));
   deviceBtn.addEventListener("click", async () => {
     const client = deviceClient();
-    if (!client || !entry) return;
+    if (!client || !current()) return;
     deviceBtn.disabled = true;
     try {
       await client.putBytes(customPath(SPEAKER_TEST_CLIP), buildClip(entry, audio()).bytes);
@@ -201,7 +260,7 @@ function renderSpeaker() {
   let liveTimer = null;
   const live = () => {
     saveSpeakerSettings(sp);
-    if (!entry) return;
+    if (!current()) return;
     clearTimeout(liveTimer);
     liveTimer = setTimeout(() => playClip(buildClip(entry, audio()).bytes), 150);
   };
@@ -278,10 +337,9 @@ function renderSpeaker() {
         settings: chatter(), audio: audio() });
       resetVoiceCatalog();
       catalog = await fetchVoiceCatalog();
-      tts.voice = r.voice;
-      tts.locale = pubLocale.value;
-      Object.assign(tts, audio());
-      saveTtsSettings(tts);
+      const t = ttsSettings();
+      Object.assign(t, audio(), { voice: r.voice, locale: pubLocale.value });
+      saveTtsSettings(t);
       pubStatus.textContent = `"${name}" is in the voice list now, for everyone, with your settings as its defaults - and selected ` +
         "for you in Custom voicepack. The voice server makes the pack clips of it while it is idle, so a whole pack in it " +
         "comes quickly after a while. To have it removed, write to info@breezedude.de.";
@@ -323,10 +381,9 @@ function renderSpeaker() {
     catalog = c;
     const locales = SPEAKER_LOCALES.filter((l) => c.own.languages.includes(ttsLanguage(l)));
     if (!c.own.available || !locales.length) {
-      recStatus.textContent = "The voice server at home is offline right now: try again later.";
-      recBtn.disabled = openBtn.disabled = true;
-      offline = true;
-      refreshOwn();
+      speakerSession.offline = true;
+      speakerStatus("The voice server at home is offline right now: try again later.");
+      speakerRefresh();
       return;
     }
     const opts = () => locales.map((l) => el("option", { value: l }, localeLabel(l)));
@@ -334,16 +391,24 @@ function renderSpeaker() {
     pubLocale.replaceChildren(...opts());
     localeSel.value = locales.includes(sp.locale) ? sp.locale : locales.includes(pack.tts) ? pack.tts : locales[0];
     pubLocale.value = localeSel.value;
+    speakerSession.offline = false;
     fillPresets();
-    refreshOwn();
+    speakerRefresh();
     checkName();
-  }).catch((e) => { recStatus.textContent = e.message; });
+  }).catch((e) => { speakerStatus(e.message); });
   fillPresets();
-  refreshOwn();
+  tryCard.id = "sp-try";
+  publishCard.id = "sp-publish";
 
   main.replaceChildren(
     el("div", { class: "head" }, el("h2", {}, "Custom speaker"),
       el("p", { class: "sub" }, "Your own voice for the clips: record it, try it, and offer it to everyone as a template.")),
     recordCard, tryCard, publishCard, privacy);
-  state.cleanup = () => { left = true; stopPlaying(); clearTimeout(liveTimer); if (recording) recording.stop(); };
+  speakerRefresh();
+  /* a redraw of this view lets a recording go on; leaving it stops the recording and keeps it */
+  state.cleanup = () => {
+    stopPlaying();
+    clearTimeout(liveTimer);
+    if (ss.recording && state.view !== "speaker") { ss.left = true; ss.recording.stop(); }
+  };
 }

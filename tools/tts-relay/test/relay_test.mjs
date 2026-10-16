@@ -79,6 +79,10 @@ function fakeWorker(secret = SECRET, opts = {}) {
         const file = stored.get(msg.pack);
         if (!file) send({ type: "error", id: msg.id, status: 404, message: "no such pack" });
         else send({ type: "pack_data", id: msg.id, size: file.length, data: file.subarray(msg.offset, msg.offset + msg.length).toString("base64") });
+      } else if (msg.type === "pack_sample") {
+        const clips = {};
+        for (const p of msg.paths) if (p !== "voices/missing.qoa") clips[p] = Buffer.from(`QOA:${p}`).toString("base64");
+        send({ type: "pack_clips", id: msg.id, clips });
       } else if (msg.type === "pack_delete") {
         send({ type: "pack_deleted", id: msg.id, deleted: stored.delete(msg.pack) });
       }
@@ -231,6 +235,11 @@ try {
   r = await fetch(`${base}/v1/packs/${made.id}`);
   j = await r.json();
   check(j.overrides.profile_hike === "Haik änd Flai", "pack details with its changed texts");
+  r = await fetch(`${base}/v1/packs/${made.id}/sample?names=takeoff,al/al_1230,missing,../x`);
+  j = await r.json();
+  check(r.ok && Buffer.from(j.clips.takeoff, "base64").toString() === "QOA:voices/takeoff.qoa" &&
+    Buffer.from(j.clips["al/al_1230"], "base64").toString() === "QOA:al/al_1230.qoa" && Object.keys(j.clips).length === 2,
+  "sample clips out of the pack, by catalogue name; odd names dropped");
   r = await fetch(`${base}/v1/packs/${made.id}/file`);
   const got = Buffer.from(await r.arrayBuffer());
   check(r.ok && got.equals(file) && /de\.ubpack/.test(r.headers.get("content-disposition")), "pack downloaded whole, as de.ubpack");

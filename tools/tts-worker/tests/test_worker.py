@@ -17,7 +17,7 @@ from websockets.asyncio.server import serve  # noqa: E402
 
 import engine  # noqa: E402
 from cache import Cache  # noqa: E402
-from packs import PackError, Packs  # noqa: E402
+from packs import PackError, Packs, fat_files, looks_like_pack  # noqa: E402
 from voices import UnknownVoice, VoiceRefused, Voices  # noqa: E402
 
 SECRET = "test-secret-0123456789"
@@ -107,6 +107,20 @@ class VoicesAndCache(unittest.TestCase):
         with self.assertRaises(PackError):
             packs.read(pid, 0, 10)
 
+    def test_fat12_reader(self):
+        files = {"voices/takeoff.qoa": b"qoaf" + b"t" * 1500, "voices/press_button_to_confirm.qoa": b"qoaf" + b"p" * 700,
+                 "al/al_1230.qoa": b"qoaf" + b"a" * 30, "version.txt": b"2023-04-21\n"}
+        image = fat12_image(files)
+        self.assertTrue(looks_like_pack(image))
+        got = fat_files(image)
+        self.assertEqual(got, files)
+        packs = Packs(Path(self.tmp.name) / "packs", 10**6, 10**7)
+        pid = "f" * 20
+        self.assertEqual(packs.put_part(pid, 0, 1, image)[0], len(image))  # FAT12 is a pack too
+        self.assertEqual(packs.clips(pid, ["voices/takeoff.qoa", "voices/PRESS_BUTTON_TO_CONFIRM.qoa", "voices/none.qoa"]),
+                         {"voices/takeoff.qoa": files["voices/takeoff.qoa"],
+                          "voices/PRESS_BUTTON_TO_CONFIRM.qoa": files["voices/press_button_to_confirm.qoa"]})
+
     def test_cache(self):
         v = self.voices.resolve("cb:de-DE-anna")
         self.assertIsNone(self.cache.get(v, "Thermik"))
@@ -121,6 +135,69 @@ class VoicesAndCache(unittest.TestCase):
         self.assertGreater(removed, 0)
         self.cache.drop("anna")
         self.assertIsNone(self.cache.get(v, "t4"))
+
+
+def fat12_image(files):
+    """A small FAT12 image like other tools make packs: {"voices/name.qoa": bytes}, one folder level,
+    long names where the 8.3 form does not fit, 512-byte clusters."""
+    bps, reserved, root_entries, total = 512, 1, 16, 400
+    image = bytearray(total * bps)
+    fat = bytearray(2 * bps)
+    nfats, fat_sectors = 1, 2
+    root = (reserved + nfats * fat_sectors) * bps
+    data = root + root_entries * 32
+    image[11:13], image[13], image[14:16], image[16] = bps.to_bytes(2, "little"), 1, reserved.to_bytes(2, "little"), nfats
+    image[17:19], image[19:21], image[22:24] = root_entries.to_bytes(2, "little"), total.to_bytes(2, "little"), fat_sectors.to_bytes(2, "little")
+    image[54:62], image[510:512] = b"FAT12   ", b"\x55\xaa"
+    nxt = [2]
+
+    def set_fat(n, v):
+        o = n + n // 2
+        if n & 1:
+            fat[o], fat[o + 1] = (fat[o] & 0x0F) | ((v & 0x0F) << 4), v >> 4
+        else:
+            fat[o], fat[o + 1] = v & 0xFF, (fat[o + 1] & 0xF0) | (v >> 8)
+
+    def store(content):
+        n = max(1, -(-len(content) // bps))
+        first = nxt[0]
+        for i in range(n):
+            c = first + i
+            set_fat(c, c + 1 if i < n - 1 else 0xFFF)
+            image[data + (c - 2) * bps:data + (c - 2) * bps + bps] = content[i * bps:(i + 1) * bps].ljust(bps, b"\0")
+        nxt[0] += n
+        return first
+
+    def entry(name, attr, first, size, k):
+        base, _, ext = name.upper().partition(".")
+        out = b""
+        if len(base) > 8 or len(ext) > 3:
+            short = (base[:6] + f"~{k}").ljust(8).encode() + ext[:3].ljust(3).encode()
+            chars = [ord(c) for c in name] + [0]
+            chars += [0xFFFF] * (-len(chars) % 13)
+            parts = [chars[i:i + 13] for i in range(0, len(chars), 13)]
+            for seq in range(len(parts), 0, -1):
+                p = b"".join(c.to_bytes(2, "little") for c in parts[seq - 1])
+                out += bytes([seq | (0x40 if seq == len(parts) else 0)]) + p[0:10] + b"\x0f\0\0" + p[10:22] + b"\0\0" + p[22:26]
+        else:
+            short = base.ljust(8).encode() + ext.ljust(3).encode()
+        flags = 0x18 if name == name.lower() else 0
+        return out + short + bytes([attr, flags]) + b"\0" * 13 + first.to_bytes(2, "little") + size.to_bytes(4, "little")
+
+    folders = {}
+    for path, content in files.items():
+        folder, _, name = path.rpartition("/")
+        folders.setdefault(folder, []).append((name, content))
+    top = b""
+    for folder, items in folders.items():
+        listing = b"".join(entry(n, 0x20, store(c), len(c), i + 1) for i, (n, c) in enumerate(items))
+        if folder:
+            top += entry(folder, 0x10, store(listing), 0, 1)
+        else:
+            top += listing
+    image[root:root + len(top)] = top
+    image[reserved * bps:(reserved + fat_sectors) * bps] = fat
+    return bytes(image)
 
 
 def fake_speak(conds_path, language, text, settings):
