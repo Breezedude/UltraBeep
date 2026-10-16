@@ -22,7 +22,7 @@ FW = os.path.dirname(HERE)
 REPO = os.path.dirname(FW)
 SOURCES = ["src/app/ini.c", "src/app/timeconv.c", "src/app/crc32.c", "src/app/gesture.c", "src/app/vario.c", "src/app/identity.c", "src/app/console_pack.c",
            "src/app/sha256.c", "src/app/fusion.c", "src/app/nmea.c", "src/app/flight.c", "src/app/igc.c",
-           "src/app/recorder.c", "src/app/battery.c", "src/app/kml.c", "src/app/summary.c", "src/app/tap.c", "src/app/announce.c", "src/app/thermal.c", "src/app/maneuver.c", "src/drivers/qoa.c", "tests/qoa_ref.c", "tests/logic_tests.c", "tests/test_stubs.c", "tests/recorder_stubs.c"]
+           "src/app/recorder.c", "src/app/battery.c", "src/app/kml.c", "src/app/summary.c", "src/app/tap.c", "src/app/announce.c", "src/app/thermal.c", "src/app/maneuver.c", "src/app/tilt.c", "src/drivers/qoa.c", "tests/qoa_ref.c", "tests/logic_tests.c", "tests/test_stubs.c", "tests/recorder_stubs.c"]
 INCLUDES = [os.path.join(HERE, "stubs"),  # before inc/: replaces board.h
             os.path.join(FW, "inc"),
             os.path.join(FW, "config"),

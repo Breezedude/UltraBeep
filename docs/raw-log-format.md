@@ -89,6 +89,12 @@ of each second (GGA and RMC of every epoch). Events, as text:
 * single taps (jerk and threshold) and double taps
 * automatic announcements
 * the thermal events (thermal climb, thermal exit, wind, glide ratio)
+* manoeuvres: `maneuver wingover <peak g> <bank> reversals <n>[ into a turn] tilt <deg|-> acos <deg>` and
+  `maneuver spiral <peak g> <bank> tilt <deg|-> acos <deg>`; `bank` is what was announced (a wingover's
+  measured tilt peak, else acos(1/n)), `tilt` the measured peak (`-` while the pilot's axes were not learned
+  or the tilt was not known all through the manoeuvre), `acos` the bank of a coordinated turn at the peak load
+  (0.55); `tilt axes learned: <s> s straight, <s> s turns, up <x y z>, forward <x y z>` once per power on
+  (`tilt.h`)
 * low battery
 * voice underruns (`voice underrun <clip> late <n> starved <n>`: blocks played again because they
   were filled too late, or silence because the clip data was not read yet)

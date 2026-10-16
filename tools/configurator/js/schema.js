@@ -334,7 +334,9 @@ const BLOCKS = [
   { id: "maxclimb", label: "Maximum climb and sink", ble: true, help: "Strongest climb and sink (5 s means) of the flight." },
   { id: "maxg", label: "Maximum g-load", ble: true, help: "Peak load factor, e.g. \"2 dot 3\" (g)." },
   { id: "bank", label: "Bank angle", ble: true,
-    help: "Bank angle of a coordinated turn at the peak load (2 g = 60°), in degrees." },
+    help: "After a wingover the largest measured tilt of the pilot, 0 to 180° (once the device has learned " +
+      "how it sits on you, about a minute into the flight); after a spiral the bank of a coordinated turn at " +
+      "the peak load (2 g = 60°)." },
 ];
 const BLOCK_BY_ID = Object.fromEntries(BLOCKS.map((b) => [b.id, b]));
 
@@ -438,8 +440,9 @@ const TRIGGERS = [
     help: "A wingover: turns that change direction - at least half a second faster than 40°/s one way, then " +
       "within 2.5 s the other way, with 1.8 g or more in the swings (a series of swings is one wingover). " +
       "Swings that run straight into a spiral are not spoken; the spiral is. A spiral: at least 1.6 g while " +
-      "turning 50°/s or more for 4 s. Spoken 2 s after the load is back below 1.3 g. The bank angle is that " +
-      "of a coordinated turn at the peak load.",
+      "turning 50°/s or more for 4 s. Spoken 2 s after the load is back below 1.3 g. The bank angle of a " +
+      "wingover is measured (the pilot's largest tilt against the vertical, beyond 90° over the top), that of " +
+      "a spiral comes from the peak load.",
     enable: { key: "announce_wingover_enable_bool", ext: true, def: "true" },
     settings: [],
     pool: ["maxg", "bank", "tone", "altitude", "duration", "time"],

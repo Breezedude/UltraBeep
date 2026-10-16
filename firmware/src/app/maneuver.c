@@ -8,6 +8,7 @@ void maneuver_init(maneuver_t *m)
   memset(m, 0, sizeof(*m));
   m->n = 1.0f;
   m->since_last_s = MANEUVER_REVERSE_S + 1.0f;
+  m->between_tilt_ok = true;
 }
 
 float maneuver_bank_deg(float load_g)
@@ -27,7 +28,8 @@ static maneuver_kind_t finish(maneuver_t *m)
 {
   m->done = m->kind;
   m->done_n_max = m->n_max;
-  m->done_bank_deg = maneuver_bank_deg(m->n_max);
+  m->done_tilt_deg = m->tilt_ok ? m->tilt_max : -1.0f;
+  m->done_bank_deg = m->kind == MANEUVER_WINGOVER && m->tilt_ok ? m->tilt_max : maneuver_bank_deg(m->n_max);
   m->done_reversals = m->reversals;
   m->done_into_turn = false;
   m->active = false;
@@ -46,16 +48,25 @@ static void end_turn(maneuver_t *m)
     m->last_s = m->turn_s;
     m->last_peak_g = m->turn_peak_g;
     m->last_peak_dps = m->turn_peak_dps;
+    m->last_tilt = m->turn_tilt;
+    m->last_tilt_ok = m->turn_tilt_ok;
     m->since_last_s = m->turn_gap_s;
     m->between_peak_g = 0.0f;
+    m->between_tilt = 0.0f;
+    m->between_tilt_ok = true;
+  } else {
+    /* a short turn belongs to the time between the turns */
+    m->between_tilt = fmaxf(m->between_tilt, m->turn_tilt);
+    m->between_tilt_ok = m->between_tilt_ok && m->turn_tilt_ok;
   }
   m->turn_sign = 0;
   m->reversal_pending = false;
 }
 
 /* Turns from the signed turn rate; true when a swing the other way was just confirmed (a wingover reversal). */
-static bool track_turns(maneuver_t *m, float n, float turn_dps, float dt_s)
+static bool track_turns(maneuver_t *m, float n, float turn_dps, float tilt, float dt_s)
 {
+  bool known = tilt >= 0.0f;
   float rate = fabsf(turn_dps);
   int8_t s = turn_dps >= MANEUVER_TURN_DPS ? 1 : turn_dps <= -MANEUVER_TURN_DPS ? -1 : 0;
   if (m->turn_sign != 0) {
@@ -74,6 +85,8 @@ static bool track_turns(maneuver_t *m, float n, float turn_dps, float dt_s)
     if (n > m->between_peak_g) {
       m->between_peak_g = n;
     }
+    m->between_tilt = fmaxf(m->between_tilt, tilt);
+    m->between_tilt_ok = m->between_tilt_ok && known;
     if (s != 0) {
       m->turn_started = true;
       m->turn_sign = s;
@@ -81,6 +94,8 @@ static bool track_turns(maneuver_t *m, float n, float turn_dps, float dt_s)
       m->turn_gap_s = 0.0f;
       m->turn_peak_g = n;
       m->turn_peak_dps = rate;
+      m->turn_tilt = fmaxf(tilt, 0.0f);
+      m->turn_tilt_ok = known;
       m->reversal_pending = m->last_sign == -s && m->since_last_s <= MANEUVER_REVERSE_S &&
                             m->last_s <= MANEUVER_TURN_MAX_S && m->last_peak_dps <= MANEUVER_TURN_MAX_DPS &&
                             m->flight_s >= MANEUVER_SETTLE_S;
@@ -92,6 +107,8 @@ static bool track_turns(maneuver_t *m, float n, float turn_dps, float dt_s)
   if (n > m->turn_peak_g) {
     m->turn_peak_g = n;
   }
+  m->turn_tilt = fmaxf(m->turn_tilt, tilt);
+  m->turn_tilt_ok = m->turn_tilt_ok && known;
   if (rate > m->turn_peak_dps && s == m->turn_sign) {
     m->turn_peak_dps = rate;
   }
@@ -103,8 +120,10 @@ static bool track_turns(maneuver_t *m, float n, float turn_dps, float dt_s)
   return peak >= MANEUVER_WINGOVER_G && m->turn_peak_dps <= MANEUVER_TURN_MAX_DPS;
 }
 
-maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, float turn_dps, float dt_s)
+maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, float turn_dps, float tilt_deg,
+                                float dt_s)
 {
+  bool known = tilt_deg >= 0.0f;
   if (!m->started) {
     m->n = load_g;
     m->started = true;
@@ -120,7 +139,7 @@ maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, flo
   bool spiralling = n >= MANEUVER_SPIRAL_G && rate_dps >= MANEUVER_SPIRAL_DPS;
   m->high_s = spiralling ? m->high_s + dt_s : 0.0f;
   m->turn_started = false;
-  bool reversal = track_turns(m, n, turn_dps, dt_s);
+  bool reversal = track_turns(m, n, turn_dps, tilt_deg, dt_s);
 
   if (!m->active) {
     if (reversal) {
@@ -129,11 +148,20 @@ maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, flo
       m->n_max = fmaxf(n, fmaxf(m->last_peak_g, fmaxf(m->between_peak_g, m->turn_peak_g)));
       m->peak_before_turn = fmaxf(m->last_peak_g, m->between_peak_g);
       m->turn_early_peak = fmaxf(n, m->turn_peak_g);
+      /* the swing before the reversal is part of it: the top of a swing has the largest bank */
+      m->tilt_max = fmaxf(m->last_tilt, fmaxf(m->between_tilt, m->turn_tilt));
+      m->tilt_ok = m->last_tilt_ok && m->between_tilt_ok && m->turn_tilt_ok;
+      m->tilt_before_turn = fmaxf(m->last_tilt, m->between_tilt);
+      m->tilt_before_ok = m->last_tilt_ok && m->between_tilt_ok;
+      m->tilt_early = m->turn_tilt;
+      m->tilt_early_ok = m->turn_tilt_ok;
       m->reversals = 1;
     } else if (m->high_s >= MANEUVER_SPIRAL_S) {
       m->active = true;
       m->kind = MANEUVER_SPIRAL;
       m->n_max = n;
+      m->tilt_max = fmaxf(tilt_deg, 0.0f);
+      m->tilt_ok = known;
     }
     return MANEUVER_NONE;
   }
@@ -145,13 +173,21 @@ maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, flo
     if (m->turn_started) {
       m->peak_before_turn = m->n_max;
       m->turn_early_peak = n;
-    } else if (m->turn_sign != 0 && m->turn_s <= MANEUVER_TURN_EARLY_S && n > m->turn_early_peak) {
-      m->turn_early_peak = n;
+      m->tilt_before_turn = m->tilt_max;
+      m->tilt_before_ok = m->tilt_ok;
+      m->tilt_early = fmaxf(tilt_deg, 0.0f);
+      m->tilt_early_ok = known;
+    } else if (m->turn_sign != 0 && m->turn_s <= MANEUVER_TURN_EARLY_S) {
+      m->turn_early_peak = fmaxf(m->turn_early_peak, n);
+      m->tilt_early = fmaxf(m->tilt_early, tilt_deg);
+      m->tilt_early_ok = m->tilt_early_ok && known;
     }
-    /* the swings are over when a turn goes on: report the wingover with its load up to that turn's first
-     * second (not the spiral's), a spiral or circle follows on its own */
+    /* the swings are over when a turn goes on: report the wingover with its load and tilt up to that turn's
+     * first second (not the spiral's), a spiral or circle follows on its own */
     if (m->turn_sign != 0 && m->turn_s > MANEUVER_TURN_MAX_S) {
       m->n_max = fmaxf(m->peak_before_turn, m->turn_early_peak);
+      m->tilt_max = fmaxf(m->tilt_before_turn, m->tilt_early);
+      m->tilt_ok = m->tilt_before_ok && m->tilt_early_ok;
       float high_s = m->high_s; /* a spiral that follows keeps its time at spiral load and rate */
       maneuver_kind_t k = finish(m);
       m->done_into_turn = true;
@@ -162,6 +198,8 @@ maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, flo
   if (n > m->n_max) {
     m->n_max = n;
   }
+  m->tilt_max = fmaxf(m->tilt_max, tilt_deg);
+  m->tilt_ok = m->tilt_ok && known;
   if (n < MANEUVER_END_G) {
     m->calm_s += dt_s;
     if (m->calm_s >= MANEUVER_END_S) {

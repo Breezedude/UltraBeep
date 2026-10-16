@@ -21,9 +21,12 @@
  *   spiral    >= MANEUVER_SPIRAL_G and >= MANEUVER_SPIRAL_DPS for
  *             MANEUVER_SPIRAL_S
  * A manoeuvre ends after MANEUVER_END_S below MANEUVER_END_G; then its peak
- * load and the bank angle of a coordinated turn with that load, acos(1/n),
- * are reported once. The peak load of the whole flight is kept for the
- * flight summary.
+ * load and its bank angle are reported once. The bank of a wingover is the
+ * peak of the pilot's measured tilt (tilt.h) over its swings, from the start
+ * of the turn before the first reversal on, when the tilt was known all that
+ * time; else, and for a spiral, the bank of a coordinated turn at the peak
+ * load, acos(1/n), which never exceeds 90 and misses the unloaded top of a
+ * swing. The peak load of the whole flight is kept for the flight summary.
  */
 #define MANEUVER_SMOOTH_S      0.2f
 #define MANEUVER_TURN_DPS      40.0f  /* a turn: the signed turn rate beyond this */
@@ -62,17 +65,23 @@ typedef struct {
   bool reversal_pending; /* the running turn reversed the last one: decided once it lasted MANEUVER_TURN_MIN_S */
   bool turn_started;     /* a turn began in this update */
   float peak_before_turn, turn_early_peak; /* the wingover's peak before the running turn, and that turn's early peak */
+  /* the measured tilt [deg] alongside the load: peaks and whether the tilt was known throughout */
+  float tilt_max, turn_tilt, last_tilt, between_tilt, tilt_before_turn, tilt_early;
+  bool tilt_ok, turn_tilt_ok, last_tilt_ok, between_tilt_ok, tilt_before_ok, tilt_early_ok;
   /* the last manoeuvre that ended */
   maneuver_kind_t done;
   float done_n_max;
-  float done_bank_deg;
+  float done_bank_deg;  /* a wingover's measured tilt peak (done_tilt_deg), else acos(1/done_n_max) */
+  float done_tilt_deg;  /* the measured tilt peak, -1 when the tilt was not known throughout */
   uint8_t done_reversals;
   bool done_into_turn; /* the wingover ran into a long turn (a spiral or a circle follows) */
 } maneuver_t;
 
 void maneuver_init(maneuver_t *m);
-/* Returns the kind of a manoeuvre that has just ended (done_* hold its values), else NONE. */
-maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, float turn_dps, float dt_s);
+/* Returns the kind of a manoeuvre that has just ended (done_* hold its values), else NONE. tilt_deg: the
+ * pilot's tilt (its peak since the last update), negative while it is not known. */
+maneuver_kind_t maneuver_update(maneuver_t *m, float load_g, float rate_dps, float turn_dps, float tilt_deg,
+                                float dt_s);
 /* Bank angle of a coordinated turn at this load factor, degrees (0 below 1 g). */
 float maneuver_bank_deg(float load_g);
 const char *maneuver_kind_name(maneuver_kind_t k);

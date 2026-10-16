@@ -74,6 +74,7 @@ static void cmd_help(void)
                  "  piezo [classic|pwm]         piezo drive (pwm: experimental, until power off)\r\n"
                  "  piezo pulse <ns>            pulse of the step \"very quiet\" (until power off)\r\n"
                  "  rawlog                      raw data log: file, size, losses\r\n"
+                 "  tasks                       stack reserve of each task, the heap's low point (RAM headroom)\r\n"
                  "  say <clip>                  play 1:/voices/<clip>.qoa\r\n"
                  "  melody <0-5>                play a piezo melody\r\n"
                  "  log                         replay the log\r\n"
@@ -82,6 +83,19 @@ static void cmd_help(void)
                  "  off                         switch off (like the button)\r\n"
                  "  reboot                      restart (resumes in the current state)\r\n";
   console_write(text, sizeof(text) - 1U); /* longer than console_printf's buffer */
+}
+
+/* The least free stack of each task since its start and the heap's low point: the RAM that could be given back. */
+static void cmd_tasks(void)
+{
+  TaskStatus_t st[16];
+  UBaseType_t n = uxTaskGetSystemState(st, sizeof(st) / sizeof(st[0]), NULL);
+  for (UBaseType_t i = 0; i < n; i++) {
+    console_printf("  %-10s stack reserve %4lu bytes\r\n", st[i].pcTaskName,
+                   (unsigned long)(st[i].usStackHighWaterMark * sizeof(StackType_t)));
+  }
+  console_printf("heap: %u bytes free, %u at the lowest, of %u\r\n", (unsigned)xPortGetFreeHeapSize(),
+                 (unsigned)xPortGetMinimumEverFreeHeapSize(), (unsigned)configTOTAL_HEAP_SIZE);
 }
 
 static void cmd_rawlog(void)
@@ -380,6 +394,8 @@ static void execute(char *cmd)
                    c.still ? "still" : "moving");
   } else if (strcmp(cmd, "rawlog") == 0) {
     cmd_rawlog();
+  } else if (strcmp(cmd, "tasks") == 0) {
+    cmd_tasks();
   } else if (strcmp(cmd, "say") == 0 && args[0]) {
     sound_say1(args, 70);
   } else if (strcmp(cmd, "melody") == 0) {

@@ -32,6 +32,7 @@ typedef struct {
   float rate_dps;      /* magnitude of the rotation rate, smoothed over 0.1 s [deg/s] */
   float turn_dps;      /* the rotation rate signed by its direction about the specific force (clockwise positive),
                           0.5 s mean [deg/s]: the manoeuvre detector's turns, independent of the fusion */
+  float tilt_deg;      /* the pilot's tilt against the true vertical (tilt.h), -1 until its axes are learned */
   bool yaw_ok;         /* the attitude is known: yaw_dps is usable */
   float yaw_dps;       /* turn rate about the vertical, 1 s mean, clockwise positive [deg/s] */
   uint32_t samples;    /* barometer samples since the start */
@@ -43,6 +44,12 @@ void sensors_stop(void);
 void sensors_get(sensors_t *out);
 /* Peaks of the IMU since the last call (once per second: the landing detection); false without samples. */
 bool sensors_take_motion(float *acc_max_g, float *acc_min_g, float *rate_max_dps);
+/* The peak of the pilot's tilt since the last call [deg] (the manoeuvre detector, every 50 ms); -1 when it was not
+ * known at every sample since. */
+float sensors_take_tilt(void);
+/* For the tilt (tilt.h): in flight (the pilot's axes are learned then), and the speed along the path [m/s]
+ * (GNSS ground speed and climb rate; negative: keep the last one). Every GNSS fix. */
+void sensors_set_flight(bool in_flight, float speed_ms);
 /* Double tap on the device (tap.h): the handler runs in the sensor task. */
 void sensors_set_tap_handler(void (*handler)(void));
 /* A button press: the vario does not trust the barometer for a moment (fusion.h). */

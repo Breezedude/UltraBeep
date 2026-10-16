@@ -14,6 +14,7 @@
 #include "rawlog.h"
 #include "sensor_bus.h"
 #include "tap.h"
+#include "tilt.h"
 #include "vario.h"
 #include "vario_audio.h"
 
@@ -42,6 +43,14 @@ static fusion_t fusion;        /* barometer + IMU */
 static sensors_t data;       /* written by the task, copied under a critical section */
 static float motion_max_g, motion_min_g = 99.0f, motion_rate_dps; /* since sensors_take_motion */
 static uint32_t motion_samples;
+static tilt_t tilt;          /* the pilot's tilt (tilt.c), from the power on */
+static volatile bool tilt_reset;
+static volatile bool tilt_in_flight;
+static volatile float tilt_speed_ms;
+static float tilt_peak;      /* since sensors_take_tilt */
+static bool tilt_gap;
+static uint32_t tilt_samples;
+static bool tilt_axes_logged;
 static float ref_offset;     /* GNSS-referenced altitude = standard altitude + ref_offset */
 static volatile bool ref_request;
 static volatile float ref_alt;
@@ -222,6 +231,14 @@ static void sample_imu(void)
   }
   fusion_imu(&fusion, w, a, 1.0f / ICM42605_RATE_HZ);
   float yaw = fusion_yaw_rate(&fusion, w) * 57.29578f;
+  bool tilt_ok = tilt_update(&tilt, a, w, 1.0f / ICM42605_RATE_HZ, tilt_in_flight, tilt_speed_ms);
+  if (tilt.axes && !tilt_axes_logged) {
+    tilt_axes_logged = true;
+    rawlog_event("tilt axes learned: %lu s straight, %lu s turns, up %.2f %.2f %.2f, forward %.2f %.2f %.2f",
+                 (unsigned long)(tilt.n_straight / ICM42605_RATE_HZ), (unsigned long)(tilt.n_turn / ICM42605_RATE_HZ),
+                 (double)tilt.M[0], (double)tilt.M[1], (double)tilt.M[2], (double)tilt.F[0], (double)tilt.F[1],
+                 (double)tilt.F[2]);
+  }
 
   if (tap.threshold == 0.0f) {
     tap_init(&tap, tap_sensitivity);
@@ -262,12 +279,38 @@ static void sample_imu(void)
   data.turn_dps += TURN_ALPHA * (turn - data.turn_dps);
   data.yaw_dps += YAW_ALPHA * (yaw - data.yaw_dps);
   data.yaw_ok = fusion.attitude_ok;
+  data.tilt_deg = tilt_ok ? tilt.tilt_deg : -1.0f;
+  if (tilt_ok) {
+    tilt_peak = tilt.tilt_deg > tilt_peak ? tilt.tilt_deg : tilt_peak;
+  } else {
+    tilt_gap = true;
+  }
+  tilt_samples++;
   float mg = m / G;
   motion_max_g = mg > motion_max_g ? mg : motion_max_g;
   motion_min_g = mg < motion_min_g ? mg : motion_min_g;
   motion_rate_dps = rate > motion_rate_dps ? rate : motion_rate_dps;
   motion_samples++;
   taskEXIT_CRITICAL();
+}
+
+float sensors_take_tilt(void)
+{
+  taskENTER_CRITICAL();
+  float peak = tilt_samples == 0U ? data.tilt_deg : tilt_gap ? -1.0f : tilt_peak;
+  tilt_peak = 0.0f;
+  tilt_gap = false;
+  tilt_samples = 0;
+  taskEXIT_CRITICAL();
+  return peak;
+}
+
+void sensors_set_flight(bool in_flight, float speed_ms)
+{
+  tilt_in_flight = in_flight;
+  if (speed_ms >= 0.0f) {
+    tilt_speed_ms = speed_ms;
+  }
 }
 
 bool sensors_take_motion(float *acc_max_g, float *acc_min_g, float *rate_max_dps)
@@ -307,9 +350,15 @@ static void sensors_task(void *arg)
       on = false;
     }
     restart_request = false;
+    if (tilt_reset) {
+      tilt_reset = false; /* a new power on; a restart for another barometer rate keeps the learned axes */
+      tilt_init(&tilt);
+      tilt_axes_logged = false;
+    }
     if (!on) {
       taskENTER_CRITICAL();
       data = (sensors_t){0};
+      data.tilt_deg = -1.0f;
       taskEXIT_CRITICAL();
       start_hw();
       on = true;
@@ -335,6 +384,7 @@ void sensors_init(void)
 
 void sensors_start(void)
 {
+  tilt_reset = true;
   want_on = true;
   xTaskNotifyGive(task);
 }

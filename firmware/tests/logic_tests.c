@@ -27,6 +27,7 @@
 #include "tap.h"
 #include "thermal.h"
 #include "maneuver.h"
+#include "tilt.h"
 #include "qoa.h"
 #include "qoa_ref.h"
 #include "vario.h"
@@ -874,11 +875,13 @@ static void flight_sim_init(flight_sim_t *s)
   s->alt = 1500.0f;
 }
 
+static float man_tilt = -1.0f; /* the measured tilt man_turn feeds (negative: not known) */
+
 static maneuver_kind_t man_turn(maneuver_t *m, float load_g, float turn_dps, float seconds)
 {
   maneuver_kind_t k = MANEUVER_NONE;
   for (int i = 0; i < (int)(seconds / 0.05f + 0.5f); i++) {
-    maneuver_kind_t r = maneuver_update(m, load_g, fabsf(turn_dps), turn_dps, 0.05f);
+    maneuver_kind_t r = maneuver_update(m, load_g, fabsf(turn_dps), turn_dps, man_tilt, 0.05f);
     if (r != MANEUVER_NONE) {
       k = r;
     }
@@ -943,6 +946,182 @@ static void test_maneuver(void)
   man_turn(&m, 1.0f, 10.0f, 1.0f);
   man_turn(&m, 2.5f, 110.0f, 2.0f);
   CHECK(man_turn(&m, 1.0f, 0.0f, 3.0f) == MANEUVER_NONE, "no wingover in the first 30 s");
+
+  /* with the measured tilt: the wingover's bank is its peak, the unloaded top between the swings included */
+  maneuver_init(&m);
+  man_tilt = 10.0f;
+  man_turn(&m, 1.0f, 0.0f, 40.0f);
+  man_tilt = 60.0f;
+  man_turn(&m, 1.6f, -80.0f, 1.5f);
+  man_tilt = 118.0f; /* the top of the swing, unloaded */
+  man_turn(&m, 1.0f, 10.0f, 1.5f);
+  man_tilt = 70.0f;
+  man_turn(&m, 2.5f, 110.0f, 2.0f);
+  man_tilt = 10.0f;
+  k = man_turn(&m, 1.0f, 0.0f, 3.0f);
+  CHECK(k == MANEUVER_WINGOVER && m.done_tilt_deg == 118.0f && m.done_bank_deg == 118.0f,
+        "wingover with the tilt: bank %d (tilt %d)", (int)m.done_bank_deg, (int)m.done_tilt_deg);
+  /* the tilt not known through the first swing: acos(1/n) as before, the tilt not reported */
+  man_turn(&m, 1.0f, 0.0f, 10.0f);
+  man_tilt = -1.0f;
+  man_turn(&m, 1.6f, -80.0f, 1.5f);
+  man_tilt = 118.0f;
+  man_turn(&m, 1.0f, 10.0f, 1.5f);
+  man_turn(&m, 2.5f, 110.0f, 2.0f);
+  man_tilt = 10.0f;
+  k = man_turn(&m, 1.0f, 0.0f, 3.0f);
+  CHECK(k == MANEUVER_WINGOVER && m.done_tilt_deg < 0.0f && m.done_bank_deg > 66.0f && m.done_bank_deg < 67.0f,
+        "wingover, tilt not known throughout: bank %d from the load", (int)m.done_bank_deg);
+  /* a spiral keeps acos(1/n) and reports the tilt it measured */
+  man_turn(&m, 1.0f, 0.0f, 10.0f);
+  man_tilt = 100.0f;
+  man_turn(&m, 2.0f, 90.0f, 10.0f);
+  man_tilt = 10.0f;
+  k = man_turn(&m, 1.0f, 0.0f, 3.0f);
+  CHECK(k == MANEUVER_SPIRAL && m.done_tilt_deg == 100.0f && m.done_bank_deg > 59.0f && m.done_bank_deg < 61.0f,
+        "spiral with the tilt: bank %d from the load, tilt %d", (int)m.done_bank_deg, (int)m.done_tilt_deg);
+  /* swings into a spiral: the tilt up to the spiral's first second, not the spiral's */
+  man_turn(&m, 1.0f, 0.0f, 10.0f);
+  man_tilt = 80.0f;
+  man_turn(&m, 1.7f, -70.0f, 1.5f);
+  man_turn(&m, 1.0f, 5.0f, 1.0f);
+  man_tilt = 85.0f;
+  man_turn(&m, 2.6f, 110.0f, 1.0f);
+  man_tilt = 130.0f;
+  k = man_turn(&m, 2.6f, 110.0f, 5.0f);
+  CHECK(k == MANEUVER_WINGOVER && m.done_into_turn && m.done_tilt_deg == 85.0f,
+        "swings into a spiral: tilt %d (not the spiral's)", (int)m.done_tilt_deg);
+  man_tilt = -1.0f;
+}
+
+/* ---- tilt.c on a synthetic flight: the device mounted askew on the pilot ---- */
+
+#define TSIM_DT 0.01f
+typedef struct {
+  tilt_t t;
+  float R[3][3];  /* pilot frame (x forward, y left, z up) -> device frame */
+  float u[3];     /* the true vertical in the pilot frame */
+  float bias[3];  /* gyro bias [rad/s] */
+  float v;        /* speed along the path [m/s] */
+  bool valid;     /* the last update gave a tilt */
+  bool ever_valid;
+  float est_peak, true_peak, err_max;
+} tsim_t;
+
+/* u turned about the axis w by -|w| dt (a vector fixed in the earth frame, seen from the body) */
+static void tsim_turn(float u[3], const float w[3], float dt)
+{
+  float n = sqrtf(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+  if (n <= 0.0f) {
+    return;
+  }
+  float k[3] = {w[0] / n, w[1] / n, w[2] / n}, th = -n * dt, c = cosf(th), s = sinf(th);
+  float kxu[3] = {k[1] * u[2] - k[2] * u[1], k[2] * u[0] - k[0] * u[2], k[0] * u[1] - k[1] * u[0]};
+  float kd = k[0] * u[0] + k[1] * u[1] + k[2] * u[2];
+  for (int i = 0; i < 3; i++) {
+    u[i] = u[i] * c + kxu[i] * s + k[i] * kd * (1.0f - c);
+  }
+}
+
+/* seconds of the rotation wp [rad/s] in the pilot frame; the specific force of a flight along the pilot's
+ * forward axis at speed v: g u + w x (v F) */
+static void tsim_run(tsim_t *s, float wx, float wy, float wz, float seconds, bool in_flight)
+{
+  const float wp[3] = {wx, wy, wz};
+  for (int i = 0; i < (int)(seconds / TSIM_DT + 0.5f); i++) {
+    tsim_turn(s->u, wp, TSIM_DT);
+    float fp[3] = {9.80665f * s->u[0], 9.80665f * s->u[1] + s->v * wz, 9.80665f * s->u[2] - s->v * wy};
+    float a[3], w[3];
+    for (int r = 0; r < 3; r++) {
+      a[r] = s->R[r][0] * fp[0] + s->R[r][1] * fp[1] + s->R[r][2] * fp[2];
+      w[r] = s->R[r][0] * wp[0] + s->R[r][1] * wp[1] + s->R[r][2] * wp[2] + s->bias[r];
+    }
+    s->valid = tilt_update(&s->t, a, w, TSIM_DT, in_flight, s->v);
+    float truth = acosf(s->u[2] > 1.0f ? 1.0f : s->u[2]) * 57.29578f;
+    if (s->valid) {
+      s->ever_valid = true;
+      s->est_peak = fmaxf(s->est_peak, s->t.tilt_deg);
+      s->true_peak = fmaxf(s->true_peak, truth);
+      s->err_max = fmaxf(s->err_max, fabsf(s->t.tilt_deg - truth));
+    }
+  }
+}
+
+/* a coordinated turn at this bank (right positive): roll in for a second, turn, roll out */
+static void tsim_turn_at(tsim_t *s, float bank_deg, float seconds)
+{
+  float b = bank_deg * 0.017453293f;
+  float omega = 9.80665f * tanf(fabsf(b)) / s->v; /* tan(bank) = v omega / g */
+  tsim_run(s, b, 0.0f, 0.0f, 1.0f, true);
+  /* right turn: the rotation vector points down, -omega u */
+  float sg = b > 0.0f ? -1.0f : 1.0f;
+  tsim_run(s, sg * omega * s->u[0], sg * omega * s->u[1], sg * omega * s->u[2], seconds, true);
+  tsim_run(s, -b, 0.0f, 0.0f, 1.0f, true);
+}
+
+static void test_tilt(void)
+{
+  static tsim_t s; /* tilt_t is small, the simulation too; static keeps the test's stack flat */
+  memset(&s, 0, sizeof(s));
+  tilt_init(&s.t);
+  /* the device turned by 35 degrees about x, then 50 about y */
+  float a1 = 35.0f * 0.017453293f, a2 = 50.0f * 0.017453293f;
+  float Rx[3][3] = {{1, 0, 0}, {0, cosf(a1), -sinf(a1)}, {0, sinf(a1), cosf(a1)}};
+  float Ry[3][3] = {{cosf(a2), 0, sinf(a2)}, {0, 1, 0}, {-sinf(a2), 0, cosf(a2)}};
+  for (int r = 0; r < 3; r++) {
+    for (int c = 0; c < 3; c++) {
+      s.R[r][c] = Ry[r][0] * Rx[0][c] + Ry[r][1] * Rx[1][c] + Ry[r][2] * Rx[2][c];
+    }
+  }
+  s.u[2] = 1.0f;
+  s.bias[0] = 0.010f; /* 0.6 deg/s */
+  s.bias[1] = -0.006f;
+  s.bias[2] = 0.004f;
+  s.v = 11.0f;
+  /* on the ground: the gyro bias */
+  tsim_run(&s, 0.0f, 0.0f, 0.0f, 10.0f, false);
+  CHECK(fabsf(s.t.bias[0] - 0.010f) < 0.0005f && fabsf(s.t.bias[1] + 0.006f) < 0.0005f && !s.ever_valid,
+        "tilt: gyro bias learned on the ground (%d, %d mdeg/s)", (int)(s.t.bias[0] * 57295.78f),
+        (int)(s.t.bias[1] * 57295.78f));
+  /* straight flight, then turns both ways: not valid before the axes are learned */
+  tsim_run(&s, 0.0f, 0.0f, 0.0f, 25.0f, true);
+  CHECK(!s.ever_valid && s.t.n_straight >= 2000U, "tilt: no tilt from straight flight alone (%lu samples)",
+        (unsigned long)s.t.n_straight);
+  tsim_turn_at(&s, 30.0f, 9.0f);
+  tsim_run(&s, 0.0f, 0.0f, 0.0f, 3.0f, true);
+  tsim_turn_at(&s, -30.0f, 9.0f);
+  tsim_run(&s, 0.0f, 0.0f, 0.0f, 5.0f, true);
+  float mp[3] = {s.R[0][2], s.R[1][2], s.R[2][2]}, fp[3] = {s.R[0][0], s.R[1][0], s.R[2][0]};
+  float mdot = mp[0] * s.t.M[0] + mp[1] * s.t.M[1] + mp[2] * s.t.M[2];
+  float fdot = fp[0] * s.t.F[0] + fp[1] * s.t.F[1] + fp[2] * s.t.F[2];
+  CHECK(s.t.axes && mdot > cosf(2.0f * 0.017453293f) && fdot > cosf(5.0f * 0.017453293f),
+        "tilt: axes learned (up off by %d/10 deg, forward by %d/10 deg)", (int)(acosf(fminf(mdot, 1.0f)) * 572.9578f),
+        (int)(acosf(fminf(fdot, 1.0f)) * 572.9578f));
+  /* a coordinated turn: the tilt is its bank, acos(1/n) */
+  s.err_max = 0.0f;
+  s.est_peak = s.true_peak = 0.0f;
+  tsim_turn_at(&s, 40.0f, 10.0f);
+  CHECK(s.valid && fabsf(s.est_peak - 40.0f) < 2.0f && s.err_max < 3.0f, "tilt: coordinated turn at 40 deg: peak %d/10, "
+        "error up to %d/10 deg", (int)(s.est_peak * 10.0f), (int)(s.err_max * 10.0f));
+  /* a steep spiral, 60 deg at 18 m/s (2 g) for 20 s */
+  s.v = 18.0f;
+  s.err_max = 0.0f;
+  s.est_peak = s.true_peak = 0.0f;
+  tsim_turn_at(&s, -60.0f, 20.0f);
+  CHECK(fabsf(s.est_peak - 60.0f) < 3.0f && s.err_max < 5.0f, "tilt: spiral at 60 deg: peak %d/10, error up to %d/10 deg",
+        (int)(s.est_peak * 10.0f), (int)(s.err_max * 10.0f));
+  /* a wingover's roll to 120 deg and back, with a gyro bias that changed since the takeoff (0.5 deg/s) */
+  s.v = 11.0f;
+  s.bias[2] += 0.0087f;
+  tsim_run(&s, 0.0f, 0.0f, 0.0f, 10.0f, true);
+  s.err_max = 0.0f;
+  s.est_peak = s.true_peak = 0.0f;
+  tsim_run(&s, 80.0f * 0.017453293f, 0.0f, 0.0f, 1.5f, true);
+  tsim_run(&s, 0.0f, -0.3f, 0.0f, 0.4f, true); /* the top: nose down, unloaded */
+  tsim_run(&s, -80.0f * 0.017453293f, 0.0f, 0.0f, 1.5f, true);
+  tsim_run(&s, 0.0f, 0.3f, 0.0f, 0.4f, true);
+  CHECK(fabsf(s.est_peak - s.true_peak) < 5.0f && s.true_peak > 118.0f, "tilt: roll to %d deg: peak %d/10 deg",
+        (int)s.true_peak, (int)(s.est_peak * 10.0f));
 }
 
 static void test_flight_thresholds(void)
@@ -2303,6 +2482,7 @@ const char *test_main(void)
   test_announce();
   test_thermal();
   test_maneuver();
+  test_tilt();
   test_qoa();
   report_len += (size_t)snprintf(report + report_len, sizeof(report) - report_len, "%d passed, %d failed\n",
                                  passed, failed);

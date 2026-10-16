@@ -433,7 +433,7 @@ function voicepackInfo(id) {
  * the device says instead of single numbers once it has them: g/g_<tenths>, the load factor 0.0 to 10.0 g as
  * one clip each ("2,3 G" instead of "2" "dot" "3"), and bank/bank_<deg>, the bank angle 0 to 180 degrees in
  * steps of 5 ("60 Grad"; a size without a side). Taken from the load of a coordinated turn the angle stays
- * below 90; the clips beyond are there for a measured roll angle (over the top of a wingover).
+ * below 90; a wingover's measured tilt (firmware 0.55) goes beyond.
  */
 const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_to_confirm", "glide_ratio", "g_load",
   "bank_angle", "thermal_exit"]);

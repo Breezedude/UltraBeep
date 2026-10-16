@@ -14,6 +14,7 @@
  */
 #include "system.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1434,20 +1435,26 @@ static void update_maneuver(void)
     return;
   }
   maneuver_kind_t k = maneuver_update(&maneuver, s.accel_fast_ms2 / 9.80665f, s.rate_dps, s.turn_dps,
-                                      (float)dt_ms / 1000.0f);
+                                      sensors_take_tilt(), (float)dt_ms / 1000.0f);
   if (k != MANEUVER_NONE) {
     log_printf("Manoeuvre: %s, %.1f g, bank %.0f deg", maneuver_kind_name(k), (double)maneuver.done_n_max,
                (double)maneuver.done_bank_deg);
+    /* the measured tilt peak next to acos(1/n): "tilt -" while the pilot's axes were not learned */
+    char tilt[12] = "-";
+    if (maneuver.done_tilt_deg >= 0.0f) {
+      snprintf(tilt, sizeof(tilt), "%.0f", (double)maneuver.done_tilt_deg);
+    }
+    float acos_deg = maneuver_bank_deg(maneuver.done_n_max);
     if (k == MANEUVER_WINGOVER) {
-      rawlog_event("maneuver %s %.2f %.0f reversals %u%s", maneuver_kind_name(k), (double)maneuver.done_n_max,
-                   (double)maneuver.done_bank_deg, maneuver.done_reversals,
-                   maneuver.done_into_turn ? " into a turn" : "");
+      rawlog_event("maneuver %s %.2f %.0f reversals %u%s tilt %s acos %.0f", maneuver_kind_name(k),
+                   (double)maneuver.done_n_max, (double)maneuver.done_bank_deg, maneuver.done_reversals,
+                   maneuver.done_into_turn ? " into a turn" : "", tilt, (double)acos_deg);
       if (maneuver.done_into_turn) {
         return; /* swings into a spiral: not spoken in the spiral, the spiral is announced after it */
       }
     } else {
-      rawlog_event("maneuver %s %.2f %.0f", maneuver_kind_name(k), (double)maneuver.done_n_max,
-                   (double)maneuver.done_bank_deg);
+      rawlog_event("maneuver %s %.2f %.0f tilt %s acos %.0f", maneuver_kind_name(k), (double)maneuver.done_n_max,
+                   (double)maneuver.done_bank_deg, tilt, (double)acos_deg);
     }
     announce_input_t in;
     announce_input(&in);
@@ -1534,13 +1541,15 @@ static void update_flight(void)
   }
   flight_fix_seq = fx.seq;
   note_gnss_time(&fx);
+  sensors_t s;
+  sensors_get(&s);
+  /* the tilt (tilt.c) learns the pilot's axes in flight and takes the centripetal acceleration of the path off */
+  sensors_set_flight(in_flight, fx.valid ? sqrtf(fx.speed_ms * fx.speed_ms + s.vario_ms * s.vario_ms) : -1.0f);
   bool second = nmea_rate_due(&flight_second, &fx, 1U);
   bool record = nmea_rate_due(&record_rate, &fx, config_get()->record_hz);
   if (!second && !record) {
     return;
   }
-  sensors_t s;
-  sensors_get(&s);
   if (!s.valid) {
     return; /* the altitude would jump from 0 once the barometer has settled */
   }

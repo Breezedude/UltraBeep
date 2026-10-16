@@ -202,15 +202,18 @@ keys stay where they are (profiles 1–3 in `config.ultrabip`), so BipLink chang
 | `thermaling` | every `announce_thermalclimb_int` s (20) while circling with a mean climb (turns without climb stay silent) | `announce_thermaling_enable_bool` (false) | the key |
 | `glide` | after `announce_glide_straighttime_int` s (30) of straight flight; with `announce_glidemingain_int` m (100, 0 = always) only on the glide after a thermal of that gain; `announce_glide_repeat_int` min (0 = once per glide) | `announce_glide_enable_bool` (true) | the three keys |
 | `wind` | circling ends with a wind estimate that is new or changed by 5 km/h or 45° | `announce_wind_enable_bool` (false) | – |
-| `wingover` | after a wingover (turns that change direction: at least 0.5 s faster than 40°/s, the other way within 2.5 s, 1.8 g or more in the swings; swings that run into a spiral are logged, not spoken) or a spiral (1.6 g and 50°/s for 4 s), 2 s after the load is back below 1.3 g (firmware/inc/maneuver.h, 0.54) | `announce_wingover_enable_bool` (true) | – |
+| `wingover` | after a wingover (turns that change direction: at least 0.5 s faster than 40°/s, the other way within 2.5 s, 1.8 g or more in the swings; swings that run into a spiral are logged, not spoken) or a spiral (1.6 g and 50°/s for 4 s), 2 s after the load is back below 1.3 g (firmware/inc/maneuver.h, 0.54; the measured bank 0.55) | `announce_wingover_enable_bool` (true) | – |
 
 Blocks: `altitude`, `climbrate` (10 s mean), `speed`, `heading`, `duration` (flight time), `time`
 (local time of day), `wind`, `glide` (glide ratio), `battery`, `tone` (the falling three-tone
 signal, no voice), `thermalclimb` (mean climb since the circling began), `thermalgain` (height
 gained since then), `maxg` (peak load factor of the flight or the manoeuvre: the one clip `g/g_23` when
 the device has that series, else "2 dot 3" from single numbers), `bank`
-(bank angle of a coordinated turn at that load, degrees, a size without a side, below 90: the
-one clip `bank/bank_60` in steps of 5 when the device has that series, else the single number), and
+(bank angle in degrees, a size without a side: after a wingover the peak of the pilot's measured tilt
+against the true vertical, 0 to 180, once the device has learned how it sits on the pilot (firmware/inc/tilt.h,
+0.55; about a minute of flight); after a spiral, and before that, the bank of a coordinated turn at the peak
+load, acos(1/n), below 90. The one clip `bank/bank_60` in steps of 5 when the device has that series, else the
+single number), and
 for the summary `maxaltitude`, `maxspeed`, `maxclimb` (max climb, a short pause, then the max sink as a negative number).
 Blocks without data (no fix, no wind estimate yet, flight time before the takeoff) are left out.
 
@@ -239,8 +242,8 @@ Details of the triggers (firmware/src/app/announce.c):
   summary `maxg` is the peak of the flight. Extension clips `g_load` and `bank_angle` (like
   `glide_ratio`) are said first when the voice pack has them. `maxg` takes the series `g/g_<tenths>`
   when `g/g_10` and `g/g_100` are there (above 10 g: `g/g_100`; the accelerometer measures to 8 g),
-  `bank` the series `bank/bank_<deg>` when `bank/bank_5` and `bank/bank_180` are there (the clips
-  above 90 are for a measured roll angle; the load of a coordinated turn gives less than 90).
+  `bank` the series `bank/bank_<deg>` when `bank/bank_5` and `bank/bank_180` are there (a wingover's
+  measured tilt goes beyond 90; the load of a coordinated turn gives less than 90).
   The device looks the extension clips up again when the voice pack changes or a clip in
   `voices/custom` is sent or deleted over Bluetooth (0.52).
 * A list holds up to 10 blocks, each once.

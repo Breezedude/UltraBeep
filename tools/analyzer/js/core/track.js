@@ -5,6 +5,8 @@
  */
 import { slopeReference } from "./dsp.js";
 import { detectFlightStates, FineManeuverDetector } from "./flightstate.js";
+import { calibrationAt, imuSample } from "./rawlog.js";
+import { TiltEstimator } from "./tilt.js";
 
 const G0 = 9.80665;
 const M_PER_DEG = 111319;
@@ -149,26 +151,46 @@ export function contextSeries(ctx) {
  * Manoeuvres of a raw log at the device's rate: |a| and |ω| smoothed over 0.1 s at the IMU rate
  * (sensors.c FAST_ALPHA), the detector ticked every 50 ms (system.c update_maneuver) between the
  * takeoff and the landing, where the device starts it afresh and reads its peak load for the summary.
- * Returns the finished manoeuvres and that peak.
+ * The pilot's tilt (tilt.c) runs from the start at every IMU sample, learns in flight, and gives the
+ * detector its peak since the last tick. Returns the finished manoeuvres and that peak.
  */
-export function fineManeuvers(ctx, t0 = -Infinity, t1 = Infinity) {
+export function fineManeuvers(ctx, t0 = -Infinity, t1 = Infinity, tiltParams = undefined) {
   const det = new FineManeuverDetector();
   const out = [];
   const FAST_ALPHA = 0.1, TURN_ALPHA = 0.02, TICK_S = 0.05;
   let fastA = 0, fastW = 0, turn = 0, started = false, lastTick = -Infinity;
+  const log = ctx.log, haveVectors = !!(log && log.imu && log.imu.n === ctx.imuT.length);
+  const tilt = new TiltEstimator(tiltParams), a = [0, 0, 0], wv = [0, 0, 0];
+  const tiltDt = 1 / (ctx.imuRate || 100);
+  let ic = 0, cal = haveVectors ? calibrationAt(log, -Infinity) : null, ib = 0, speed = 0;
+  let tiltPeak = 0, tiltGap = false, tiltN = 0, tiltNow = -1;
   for (let k = 0; k < ctx.imuT.length; k++) {
     const g = ctx.imuAcc[k] / G0, w = ctx.imuGyro[k];
     if (!started) { fastA = g; started = true; } else fastA += FAST_ALPHA * (g - fastA);
     fastW += FAST_ALPHA * (w - fastW);
     if (ctx.imuTurn) turn += TURN_ALPHA * (ctx.imuTurn[k] - turn);
     const t = ctx.imuT[k];
+    if (haveVectors) {
+      while (ic < log.calib.length && log.calib[ic].t <= log.imu.t[k]) cal = log.calib[ic++];
+      imuSample(log, k, a, wv, cal);
+      // the speed along the path as system.c gives it per fix: GNSS ground speed and the climb rate, held
+      while (ib < ctx.tS.length - 1 && ctx.tS[ib + 1] <= t) ib++;
+      const vh = ctx.gnssSpeed[ib], vz = ctx.loggedVz ? ctx.loggedVz[ib] : 0;
+      if (Number.isFinite(vh)) speed = Math.hypot(vh, Number.isFinite(vz) ? vz : 0);
+      const ok = tilt.update(a, wv, tiltDt, t >= t0 && t <= t1, speed);
+      tiltNow = ok ? tilt.tiltDeg : -1;
+      if (ok) tiltPeak = Math.max(tiltPeak, tilt.tiltDeg); else tiltGap = true;
+      tiltN++;
+    }
     if (t < t0 || t > t1 || t - lastTick < TICK_S) continue;
     const dt = lastTick === -Infinity ? TICK_S : t - lastTick;
     lastTick = t;
-    const done = det.update(t, fastA, fastW, dt, turn);
+    const tiltDeg = !haveVectors ? -1 : tiltN === 0 ? tiltNow : tiltGap ? -1 : tiltPeak;
+    tiltPeak = 0; tiltGap = false; tiltN = 0;
+    const done = det.update(t, fastA, fastW, dt, turn, tiltDeg);
     if (done) out.push(done);
   }
-  return { maneuvers: out, maxLoad: det.gMaxFlight };
+  return { maneuvers: out, maxLoad: det.gMaxFlight, tiltAxes: tilt.axes ? { M: tilt.M, F: tilt.F } : null };
 }
 
 /* The flight states of a context (raw log or track), on its per-second series. */

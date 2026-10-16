@@ -58,6 +58,7 @@ set(APP_SOURCES
   src/app/announce.c
   src/app/thermal.c
   src/app/maneuver.c
+  src/app/tilt.c
   src/app/system.c
   src/app/timeconv.c
   src/app/vario.c

@@ -16,6 +16,7 @@ import { buildTrackContext, contextSeries, fineManeuvers, flightStatesOf } from 
 import { FineManeuverDetector, FlightDetector, LANDING_DEFAULTS, ManeuverDetector, TAKEOFF_DEFAULTS } from "./js/core/flightstate.js";
 import { drawnAltitude, liftPath, terrainOffset } from "./js/core/terrain.js";
 import { attitudeAt, pilotAttitude } from "./js/core/attitude.js";
+import { TiltEstimator } from "./js/core/tilt.js";
 
 let pass = 0, fail = 0;
 function check(cond, msg) {
@@ -625,6 +626,69 @@ check(!varioTone(DEFAULT_CURVE, 0.05).sound && varioTone(DEFAULT_CURVE, -3).soun
   check(log.settings.length === 2 && log.settings[0].group === "device" && log.settings[0].values.id === "UB4360",
     "settings: group and values parsed");
   check(log.settings[1].values.vario_liftysound_bool === "false" && log.stats.unknown === 0, "settings: not counted as unknown records");
+}
+
+/* ---- the pilot's tilt (tilt.js, the firmware's tilt.c): the C test's synthetic flight ---- */
+{
+  const D = Math.PI / 180, G = 9.80665, dt = 0.01;
+  const a1 = 35 * D, a2 = 50 * D; /* the device turned by 35 deg about x, then 50 about y */
+  const Rx = [[1, 0, 0], [0, Math.cos(a1), -Math.sin(a1)], [0, Math.sin(a1), Math.cos(a1)]];
+  const Ry = [[Math.cos(a2), 0, Math.sin(a2)], [0, 1, 0], [-Math.sin(a2), 0, Math.cos(a2)]];
+  const R = [0, 1, 2].map((r) => [0, 1, 2].map((c) => Ry[r][0] * Rx[0][c] + Ry[r][1] * Rx[1][c] + Ry[r][2] * Rx[2][c]));
+  const bias = [0.010, -0.006, 0.004];
+  const est = new TiltEstimator();
+  let u = [0, 0, 1], v = 11, peak = 0, truePeak = 0, err = 0, valid = false;
+  const run = (wp, seconds, inFlight) => {
+    for (let i = 0; i < Math.round(seconds / dt); i++) {
+      const n = Math.hypot(...wp);
+      if (n > 0) { /* u turned about w by -|w| dt */
+        const k = wp.map((x) => x / n), th = -n * dt, c = Math.cos(th), s = Math.sin(th);
+        const kxu = [k[1] * u[2] - k[2] * u[1], k[2] * u[0] - k[0] * u[2], k[0] * u[1] - k[1] * u[0]];
+        const kd = k[0] * u[0] + k[1] * u[1] + k[2] * u[2];
+        u = u.map((x, j) => x * c + kxu[j] * s + k[j] * kd * (1 - c));
+      }
+      const fp = [G * u[0], G * u[1] + v * wp[2], G * u[2] - v * wp[1]];
+      const a = R.map((row) => row[0] * fp[0] + row[1] * fp[1] + row[2] * fp[2]);
+      const w = R.map((row, j) => row[0] * wp[0] + row[1] * wp[1] + row[2] * wp[2] + bias[j]);
+      valid = est.update(a, w, dt, inFlight, v);
+      if (valid) {
+        const truth = Math.acos(Math.min(1, u[2])) / D;
+        peak = Math.max(peak, est.tiltDeg); truePeak = Math.max(truePeak, truth); err = Math.max(err, Math.abs(est.tiltDeg - truth));
+      }
+    }
+  };
+  const turnAt = (bankDeg, seconds) => {
+    const b = bankDeg * D, om = G * Math.tan(Math.abs(b)) / v, sg = b > 0 ? -1 : 1;
+    run([b, 0, 0], 1, true);
+    run(u.map((x) => sg * om * x), seconds, true);
+    run([-b, 0, 0], 1, true);
+  };
+  run([0, 0, 0], 10, false);
+  check(Math.abs(est.bias[0] - 0.010) < 0.0005 && !valid, `tilt: gyro bias on the ground ${(est.bias[0] / D).toFixed(3)} deg/s`);
+  run([0, 0, 0], 25, true);
+  turnAt(30, 9); run([0, 0, 0], 3, true); turnAt(-30, 9); run([0, 0, 0], 5, true);
+  const m = [R[0][2], R[1][2], R[2][2]];
+  check(est.axes && Math.acos(Math.min(1, m[0] * est.M[0] + m[1] * est.M[1] + m[2] * est.M[2])) / D < 2, "tilt: axes learned");
+  peak = truePeak = err = 0; turnAt(40, 10);
+  check(Math.abs(peak - 40) < 2 && err < 3, `tilt: coordinated turn at 40 deg: peak ${peak.toFixed(1)}, error up to ${err.toFixed(1)}`);
+  v = 18; peak = truePeak = err = 0; turnAt(-60, 20);
+  check(Math.abs(peak - 60) < 3 && err < 5, `tilt: spiral at 60 deg: peak ${peak.toFixed(1)}, error up to ${err.toFixed(1)}`);
+  v = 11; bias[2] += 0.0087; run([0, 0, 0], 10, true);
+  peak = truePeak = err = 0;
+  run([80 * D, 0, 0], 1.5, true); run([0, -0.3, 0], 0.4, true); run([-80 * D, 0, 0], 1.5, true); run([0, 0.3, 0], 0.4, true);
+  check(Math.abs(peak - truePeak) < 5 && truePeak > 118, `tilt: roll to ${truePeak.toFixed(0)} deg: peak ${peak.toFixed(1)}`);
+  /* the detector: the wingover's bank is the measured peak, the spiral's from its load */
+  const det = new FineManeuverDetector();
+  let done = null;
+  const tick = (load, turn, tilt, seconds) => {
+    for (let i = 0; i < Math.round(seconds / 0.05); i++) {
+      const d = det.update(0, load, Math.abs(turn), 0.05, turn, tilt);
+      if (d) done = d;
+    }
+  };
+  tick(1, 0, 10, 40); tick(1.6, -80, 60, 1.5); tick(1, 10, 118, 1.5); tick(2.5, 110, 70, 2); tick(1, 0, 10, 3);
+  check(done && done.kind === "wingover" && done.bank === 118 && done.tilt === 118 && Math.abs(done.acos - 66.4) < 0.5,
+    `tilt: wingover bank ${done && done.bank} (acos ${done && done.acos.toFixed(1)})`);
 }
 
 console.log(`${pass} passed, ${fail} failed`);

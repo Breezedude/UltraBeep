@@ -437,16 +437,25 @@ export class FineManeuverDetector {
     this.turnSign = 0; this.turnS = 0; this.turnGapS = 0; this.turnPeakG = 0; this.turnPeakDps = 0;
     this.lastSign = 0; this.lastS = 0; this.lastPeakG = 0; this.lastPeakDps = 0; this.sinceLastS = TURN.reverseS + 1;
     this.betweenPeakG = 0; this.pending = false;
+    /* the measured tilt alongside the load (maneuver.c 0.55): peaks and whether it was known throughout */
+    this.tiltMax = 0; this.turnTilt = 0; this.lastTilt = 0; this.betweenTilt = 0; this.tiltBeforeTurn = 0; this.tiltEarly = 0;
+    this.tiltOk = false; this.turnTiltOk = false; this.lastTiltOk = false; this.betweenTiltOk = true;
+    this.tiltBeforeOk = false; this.tiltEarlyOk = false;
   }
   endTurn() {
     if (this.turnS >= TURN.minS) {
       this.lastSign = this.turnSign; this.lastS = this.turnS; this.lastPeakG = this.turnPeakG;
       this.lastPeakDps = this.turnPeakDps; this.sinceLastS = this.turnGapS; this.betweenPeakG = 0;
+      this.lastTilt = this.turnTilt; this.lastTiltOk = this.turnTiltOk; this.betweenTilt = 0; this.betweenTiltOk = true;
+    } else {
+      this.betweenTilt = Math.max(this.betweenTilt, this.turnTilt); /* a short turn belongs to the time between */
+      this.betweenTiltOk = this.betweenTiltOk && this.turnTiltOk;
     }
     this.turnSign = 0; this.pending = false;
   }
   /* true when a swing the other way was just confirmed */
-  trackTurns(n, turnDps, dt) {
+  trackTurns(n, turnDps, dt, tilt = -1) {
+    const known = tilt >= 0;
     const rate = Math.abs(turnDps);
     const s = turnDps >= TURN.dps ? 1 : turnDps <= -TURN.dps ? -1 : 0;
     if (this.turnSign !== 0) {
@@ -456,50 +465,71 @@ export class FineManeuverDetector {
     if (this.turnSign === 0) {
       this.sinceLastS += dt;
       if (n > this.betweenPeakG) this.betweenPeakG = n;
+      this.betweenTilt = Math.max(this.betweenTilt, tilt); this.betweenTiltOk = this.betweenTiltOk && known;
       if (s !== 0) {
         this.turnStarted = true;
         this.turnSign = s; this.turnS = 0; this.turnGapS = 0; this.turnPeakG = n; this.turnPeakDps = rate;
+        this.turnTilt = Math.max(tilt, 0); this.turnTiltOk = known;
         this.pending = this.lastSign === -s && this.sinceLastS <= TURN.reverseS && this.lastS <= TURN.maxS &&
           this.lastPeakDps <= TURN.maxDps && this.flightS >= TURN.settleS;
       }
     }
     if (this.turnSign === 0) return false;
     if (n > this.turnPeakG) this.turnPeakG = n;
+    this.turnTilt = Math.max(this.turnTilt, tilt); this.turnTiltOk = this.turnTiltOk && known;
     if (rate > this.turnPeakDps && s === this.turnSign) this.turnPeakDps = rate;
     if (!this.pending || this.turnS < TURN.minS) return false;
     this.pending = false;
     return Math.max(this.lastPeakG, this.betweenPeakG, this.turnPeakG) >= TURN.wingoverG && this.turnPeakDps <= TURN.maxDps;
   }
   finish(t) {
-    const done = { kind: this.kind, nMax: this.nMax, bank: bankOfLoad(this.nMax), t0: this.startT, t1: t, reversals: this.reversals };
+    const tilt = this.tiltOk ? this.tiltMax : null, acos = bankOfLoad(this.nMax);
+    const done = { kind: this.kind, nMax: this.nMax, bank: this.kind === "wingover" && tilt !== null ? tilt : acos,
+      tilt, acos, t0: this.startT, t1: t, reversals: this.reversals };
     this.active = false; this.kind = null; this.reversals = 0; this.highS = 0; this.calmS = 0;
     return done;
   }
-  /* one tick: the smoothed load [g], rotation rate [°/s] and signed turn rate [°/s], dt in seconds; returns a
-   * finished manoeuvre or null */
-  update(t, loadG, rateDps, dt, turnDps = 0) {
+  /* one tick: the smoothed load [g], rotation rate [°/s], signed turn rate [°/s] and the tilt's peak since the
+   * last tick [°] (negative: not known), dt in seconds; returns a finished manoeuvre or null */
+  update(t, loadG, rateDps, dt, turnDps = 0, tiltDeg = -1) {
+    const known = tiltDeg >= 0;
     if (!this.started) { this.n = loadG; this.started = true; } else this.n += dt / (MAN_SMOOTH_S + dt) * (loadG - this.n);
     const n = this.n;
     this.flightS += dt;
     if (n > this.gMaxFlight) this.gMaxFlight = n;
     this.highS = n >= MAN.spiralG && rateDps >= MAN.spiralDps ? this.highS + dt : 0;
     this.turnStarted = false;
-    const reversal = this.trackTurns(n, turnDps, dt);
+    const reversal = this.trackTurns(n, turnDps, dt, tiltDeg);
     if (!this.active) {
       if (reversal) {
         this.active = true; this.kind = "wingover"; this.reversals = 1; this.startT = t;
         this.nMax = Math.max(n, this.lastPeakG, this.betweenPeakG, this.turnPeakG);
         this.peakBeforeTurn = Math.max(this.lastPeakG, this.betweenPeakG);
         this.turnEarlyPeak = Math.max(n, this.turnPeakG);
-      } else if (this.highS >= MAN.spiralS) { this.active = true; this.kind = "spiral"; this.nMax = n; this.startT = t - MAN.spiralS; }
+        this.tiltMax = Math.max(this.lastTilt, this.betweenTilt, this.turnTilt);
+        this.tiltOk = this.lastTiltOk && this.betweenTiltOk && this.turnTiltOk;
+        this.tiltBeforeTurn = Math.max(this.lastTilt, this.betweenTilt);
+        this.tiltBeforeOk = this.lastTiltOk && this.betweenTiltOk;
+        this.tiltEarly = this.turnTilt; this.tiltEarlyOk = this.turnTiltOk;
+      } else if (this.highS >= MAN.spiralS) {
+        this.active = true; this.kind = "spiral"; this.nMax = n; this.startT = t - MAN.spiralS;
+        this.tiltMax = Math.max(tiltDeg, 0); this.tiltOk = known;
+      }
       return null;
     }
     if (this.kind === "wingover") {
       if (reversal) this.reversals++;
-      if (this.turnStarted) { this.peakBeforeTurn = this.nMax; this.turnEarlyPeak = n; }
-      else if (this.turnSign !== 0 && this.turnS <= TURN.earlyS && n > this.turnEarlyPeak) this.turnEarlyPeak = n;
+      if (this.turnStarted) {
+        this.peakBeforeTurn = this.nMax; this.turnEarlyPeak = n;
+        this.tiltBeforeTurn = this.tiltMax; this.tiltBeforeOk = this.tiltOk;
+        this.tiltEarly = Math.max(tiltDeg, 0); this.tiltEarlyOk = known;
+      } else if (this.turnSign !== 0 && this.turnS <= TURN.earlyS) {
+        this.turnEarlyPeak = Math.max(this.turnEarlyPeak, n);
+        this.tiltEarly = Math.max(this.tiltEarly, tiltDeg); this.tiltEarlyOk = this.tiltEarlyOk && known;
+      }
       if (this.turnSign !== 0 && this.turnS > TURN.maxS) {
         this.nMax = Math.max(this.peakBeforeTurn, this.turnEarlyPeak); /* the swings' load, not the spiral's */
+        this.tiltMax = Math.max(this.tiltBeforeTurn, this.tiltEarly); this.tiltOk = this.tiltBeforeOk && this.tiltEarlyOk;
         const highS = this.highS; /* a spiral that follows keeps its time at spiral load and rate */
         const done = this.finish(t);
         done.intoTurn = true; /* logged, not announced: the spiral is */
@@ -508,6 +538,7 @@ export class FineManeuverDetector {
       }
     }
     if (n > this.nMax) this.nMax = n;
+    this.tiltMax = Math.max(this.tiltMax, tiltDeg); this.tiltOk = this.tiltOk && known;
     if (n < MAN.endG) {
       this.calmS += dt;
       if (this.calmS >= MAN.endS) return this.finish(t - MAN.endS);
@@ -612,7 +643,9 @@ export function detectFlightStates(series, cfg = DEFAULT_CONFIG, opts = {}) {
         if (i1 !== i) continue;
         const i0 = Math.max(0, Math.floor(done.t0 - series.t[0]));
         for (let k = i0; k <= i1 && k < n; k++) maneuverSeconds[k] = kindIndex[done.kind];
-        say(i1, done.kind, `${done.kind} ${done.nMax.toFixed(1)} g, bank ${done.bank.toFixed(0)}°${done.intoTurn ? " (into the turn, not spoken)" : ""}`);
+        const tiltText = done.tilt === null || done.tilt === undefined ? "tilt not known"
+          : done.kind === "wingover" ? `measured, acos(1/n) ${done.acos.toFixed(0)}°` : `measured tilt ${done.tilt.toFixed(0)}°`;
+        say(i1, done.kind, `${done.kind} ${done.nMax.toFixed(1)} g, bank ${done.bank.toFixed(0)}° (${tiltText})${done.intoTurn ? " (into the turn, not spoken)" : ""}`);
       }
     } else {
       const done = man.update(i, load, Number.isFinite(turn) ? turn : 0, vz, measured);
