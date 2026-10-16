@@ -143,6 +143,7 @@ async function main() {
     console.log(`${path}: firmware ${log.header.firmware}, ${(h.summary.log.durationS / 60).toFixed(1)} min, ` +
       `baro ${log.baro.n}, IMU ${log.imu.n}, GNSS epochs ${ctx.fixes.n} (${ctx.fixRate}/s), events ${log.events.length}`);
     for (const x of h.findings) console.log(`[${x.level}] ${x.sensor}: ${x.title}${x.detail ? " - " + x.detail : ""}`);
+    for (const x of log.settings || []) console.log(`[settings ${((x.t - log.t0) / 1000).toFixed(1)} s] ${x.text}`);
     return;
   }
 

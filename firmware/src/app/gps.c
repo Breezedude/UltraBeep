@@ -971,6 +971,8 @@ static void start_sequence(gps_start_t mode)
   }
   st.state = GPS_SEARCHING;
   log_printf("GPS: %s, searching", awake ? "module answered" : "module did NOT answer");
+  rawlog_event("gps started: %s, %lu baud, %u ms, %s, %s start%s", awake ? "answered" : "NO answer",
+               (unsigned long)st.baud, st.cycle_ms, st.systems, gps_start_name(mode), st.time_injected ? ", time given" : "");
 }
 
 /* Back to 115200 baud (idle state): the rate every host starts with. */

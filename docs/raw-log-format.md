@@ -63,6 +63,15 @@ filters with `(raw − offset) × scale`; the raw IMU records stay uncalibrated.
 | 4 | float32[3] | offset x, y, z [m/s²] |
 | 16 | float32[3] | scale x, y, z |
 
+### Type 6: settings (0.51)
+`uint32` time stamp [ms], then text: a group word and `key=value` pairs separated by spaces, with the keys of
+the configuration files (docs/config-ext-format.md). Written right after the header (`device`: serial,
+`UB` id, hardware, bootloader, stock firmware string, firmware; `sensors`; `recording`; `takeoff`;
+`landing`), at the profile choice (`profile`: number, type, takeoff detection, tap sensitivity, time zone;
+`vario`: thresholds, sweep and weak-lift tone, integration time; `tones`: the eight curve points
+`vz,freq,duration,duty`), and all of them again after a configuration reload. The GNSS start is an event
+(`gps started: <answered>, <baud>, <cycle ms>, <systems>, <start> start[, time given]`).
+
 ### Type 3: GPS line, type 4: event
 `uint32` time stamp [ms], then the text without line end. GPS lines are what the module sends
 (NMEA sentences and command answers); at 5 Hz the GSA and GSV sentences only of the first epoch

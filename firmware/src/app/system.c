@@ -581,6 +581,72 @@ static void say_battery_level(void)
   sound_say(list, 2, ground_voice());
 }
 
+/*
+ * The settings a raw log needs to be read correctly (docs/raw-log-format.md, record type 6), with the keys of
+ * the configuration files: the device, its sensor, recording and flight detection settings after the header
+ * and after a reload; the profile in use with its vario tones at the profile choice and after a reload.
+ */
+#define SETTINGS_TEXT 240
+static char settings_text[SETTINGS_TEXT]; /* system task only */
+
+static const char *bool_text(bool v)
+{
+  return v ? "true" : "false";
+}
+
+static void log_device_settings(void)
+{
+  const config_t *c = config_get();
+  const uint32_t *uid64 = (const uint32_t *)UID64_BASE;
+  static const char *const systems[] = {"all", "gps+glonass", "gps"};
+  char *s = settings_text;
+  snprintf(s, SETTINGS_TEXT, "device serial=%08lX%08lX id=UB%04lX hardware=%s bootloader=BL_v%lu stock=%s firmware=%s",
+           (unsigned long)uid64[1], (unsigned long)uid64[0], (unsigned long)(uid64[0] & 0xFFFFU),
+           c->hw_version[0] ? c->hw_version : "-", (unsigned long)((RTC->BKP14R >> 16) & 0xFFU),
+           c->stock_fw_version[0] ? c->stock_fw_version : "-", FW_VERSION);
+  rawlog_settings(s);
+  snprintf(s, SETTINGS_TEXT, "sensors system_barorate_int=%u system_gpsrate_int=%u system_gpssystems_string=%s accel_calibration=%s",
+           c->baro_rate, c->gps_rate, systems[c->gps_systems < 3U ? c->gps_systems : 0U],
+           c->accel_cal_from_file ? "file" : "factory");
+  rawlog_settings(s);
+  snprintf(s, SETTINGS_TEXT, "recording flight_recordigc_bool=%s flight_recordkml_bool=%s flight_recordrate_int=%u",
+           bool_text(c->record_igc), bool_text(c->record_kml), c->record_hz);
+  rawlog_settings(s);
+  snprintf(s, SETTINGS_TEXT, "takeoff flight_takeoffspeed_int=%u flight_takeoffspeedtime_int=%u flight_takeoffdistance_int=%u "
+           "flight_takeoffaltitude_int=%u flight_takeoffclimb_int=%u flight_takeoffclimbtime_int=%u",
+           c->takeoff_speed_kmh, c->takeoff_speed_s, c->takeoff_distance_m, c->takeoff_altitude_m, c->takeoff_climb_cms,
+           c->takeoff_climb_s);
+  rawlog_settings(s);
+  snprintf(s, SETTINGS_TEXT, "landing flight_landingdetect_bool=%s flight_landingtime_int=%u flight_landingimpact_bool=%s "
+           "flight_landingimpactg_int=%u flight_landingspeed_int=%u flight_landingimpacttime_int=%u flight_landinghandling_bool=%s",
+           bool_text(c->landing_detect), c->landing_time_s, bool_text(c->landing_impact), c->landing_impact_g,
+           c->landing_slow_kmh, c->landing_impact_s, bool_text(c->landing_handling));
+  rawlog_settings(s);
+}
+
+static void log_profile_settings(void)
+{
+  const profile_t *p = &config_get()->profile[profile - 1];
+  const vario_tones_t *t = &p->tones;
+  char *s = settings_text;
+  snprintf(s, SETTINGS_TEXT, "profile number=%u identity_profilename_string=%s gps_takeoffdetection_bool=%s "
+           "system_tapsensitivity_int=%u system_timeoffsetminutes_int=%d system_timezoneauto_bool=%s",
+           profile, p->type[0] ? p->type : "-", bool_text(p->takeoff_detect), p->tap_sensitivity, p->time_offset_min,
+           bool_text(p->tz_auto));
+  rawlog_settings(s);
+  snprintf(s, SETTINGS_TEXT, "vario vario_liftstart_int=%d vario_sinkstart_int=%d vario_sinkalarm_bool=%s vario_sweeptone_bool=%s "
+           "vario_liftysound_bool=%s vario_integrationtime_int=%u",
+           t->lift_start_cms, t->sink_start_cms, bool_text(t->sink_alarm), bool_text(t->sweep), bool_text(t->lifty),
+           t->integration_pct);
+  rawlog_settings(s);
+  int n = snprintf(s, SETTINGS_TEXT, "tones vz,freq,duration,duty=");
+  for (int i = 0; i < VARIO_TONE_POINTS && n > 0 && (size_t)n < SETTINGS_TEXT; i++) {
+    n += snprintf(s + n, SETTINGS_TEXT - (size_t)n, "%s%d,%u,%u,%u", i ? " " : "", t->point[i].vz_cms, t->point[i].freq_hz,
+                  t->point[i].period_ms, t->point[i].duty);
+  }
+  rawlog_settings(s);
+}
+
 static void enter_ground(void)
 {
   const config_t *c = config_get();
@@ -593,6 +659,7 @@ static void enter_ground(void)
   state = ST_ON;
   fresh_press_needed = button_pressed();
   log_printf("Ground: profile %u%s", profile, p->takeoff_detect ? "" : " (no takeoff detection)");
+  log_profile_settings();
   say_battery_level();
 }
 
@@ -761,8 +828,8 @@ static void power_on(bool melody, bool select_profile)
   ble_enable();
   still_since = 0;
   storage_open_voice_pack(config_get()->language);
-  if (config_get()->rawlog) {
-    rawlog_start();
+  if (config_get()->rawlog && rawlog_start()) {
+    log_device_settings();
   }
   flight_set_landing(&flight, config_get()->landing_detect, config_get()->landing_time_s);
   apply_takeoff_config();
@@ -1057,6 +1124,9 @@ static void check_config_update(void)
   flight_set_landing(&flight, c->landing_detect, c->landing_time_s);
   apply_takeoff_config();
   sensors_set_tap_sensitivity(c->profile[profile - 1].tap_sensitivity); /* the profile in use */
+  rawlog_event("config reloaded (%s)", from_app ? "BipLink" : "configurator");
+  log_device_settings();
+  log_profile_settings();
 }
 
 /* Every 10 s on battery: a warning, and a clean power off before the battery is empty. */

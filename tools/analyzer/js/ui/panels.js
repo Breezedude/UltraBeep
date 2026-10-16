@@ -125,6 +125,10 @@ export function renderHealth(pane, app, health) {
     ...(findings.length ? findings : [el("p", { class: "muted" }, "Nothing found.")]),
     el("h2", {}, "Log"),
     kv({ firmware: s.log.firmware, duration: `${f(s.log.durationS / 60, 1)} min`, size: `${f(s.log.sizeBytes / 1e6, 1)} MB`, records: s.log.records, "clock set": s.log.clockSet ? "yes" : "no" }),
+    ...(s.log.settings.length ? [el("h2", {}, "Settings"),
+      el("dl", { class: "kv settings" }, s.log.settings.map((x, i) => [
+        el("dt", {}, i && x.t !== s.log.settings[0].t ? `${x.group} (${app.fmtTime((x.t - (app.state.log?.t0 ?? x.t)) / 1000, true)})` : x.group),
+        el("dd", {}, Object.entries(x.values).map(([k, v]) => `${k}=${v}`).join("  "))]))] : []),
     el("h2", {}, "Streams"),
     kv({
       barometer: `${f(s.baroStream.rate, 2)} Hz, ${s.baroStream.gaps.length} gaps, jitter p99 ${f(s.baroStream.jitterP99, 1)} ms`,
