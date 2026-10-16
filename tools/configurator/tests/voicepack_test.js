@@ -36,11 +36,18 @@ check(voicepackText("pt", "takeoff") === "Descolagem" && voicepackText("br", "ta
   "the Brazilian variant overrides a few words and keeps the rest");
 
 const series = de.filter((c) => c.name.startsWith("g/"));
-check(VOICEPACK_EXTENSION.size === 7 && de.filter((c) => !c.stock).length === 7 + 101 &&
-  de.filter((c) => c.stock).length === de.length - 108 && series.every((c) => !c.stock) && voicepackExtension("g/g_23") &&
-  !voicepackExtension("al/al_1230") && !voicepackExtension("gps_ok") &&
+const bank = de.filter((c) => c.name.startsWith("bank/"));
+check(VOICEPACK_EXTENSION.size === 7 && de.filter((c) => !c.stock).length === 7 + 101 + 19 &&
+  de.filter((c) => c.stock).length === de.length - 127 && [...series, ...bank].every((c) => !c.stock) &&
+  voicepackExtension("g/g_23") && voicepackExtension("bank/bank_60") &&
+  !voicepackExtension("al/al_1230") && !voicepackExtension("gps_ok") && voicepackExtension("bank_angle") &&
   Object.keys(VOICEPACK_LANGUAGES).every((l) => [...VOICEPACK_EXTENSION].every((n) => voicepackText(l, n))),
-"the 7 extension words and the 101 load factor clips are flagged and have texts in every language");
+"the 7 extension words, the 101 load factor and the 19 bank angle clips are flagged and have texts in every language");
+check(bank.length === 19 && bank[0].name === "bank/bank_0" && bank[18].name === "bank/bank_90" &&
+  voicepackText("de", "bank/bank_60") === "60 Grad" && voicepackText("us", "bank/bank_45") === "45 degrees" &&
+  voicepackText("fr", "bank/bank_0") === "0 degré" && voicepackText("fr", "bank/bank_5") === "5 degrés" &&
+  voicepackText("br", "bank/bank_30") === "30 graus" && voicepackText("nl", "bank/bank_85") === "85 graden",
+"the bank angle series: 0 to 90 degrees in steps of 5");
 check(series.length === 101 && series[0].name === "g/g_0" && series[100].name === "g/g_100" &&
   voicepackText("de", "g/g_23") === "2,3 G" && voicepackText("de", "g/g_10") === "1 G" && voicepackText("en", "g/g_23") === "2.3 G" &&
   voicepackText("us", "g/g_100") === "10 G" && voicepackText("fr", "g/g_5") === "0,5 G",

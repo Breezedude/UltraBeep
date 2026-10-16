@@ -29,7 +29,7 @@ typedef enum {
   ANN_THERMALCLIMB, /* vario_lift_<cm/s>: mean climb since the circling began */
   ANN_THERMALGAIN,  /* al/al_<m>: height gained since the circling began */
   ANN_MAXG,         /* [g_load] g/g_<tenths> (without that series: <n> dot <tenth>): peak load factor */
-  ANN_BANK,         /* [bank_angle] <deg>: bank of a coordinated turn at that load */
+  ANN_BANK,         /* [bank_angle] bank/bank_<deg, steps of 5> (without them: <deg>): bank of a coordinated turn */
   ANN_MAXALTITUDE,  /* altitude_max al/al_<m> (flight summary) */
   ANN_MAXSPEED,     /* speed_max sp/sp_<km/h> */
   ANN_MAXCLIMB,     /* vz_max vario_lift_<cm/s> pause vario_sink_<cm/s> (the sink clip says the minus) */
@@ -132,6 +132,7 @@ typedef struct {
   float max_sink_ms;      /* positive */
   bool glide_word, g_word, bank_word; /* extension clips glide_ratio, g_load, bank_angle in the voice pack */
   bool g_series;          /* extension clips g/g_0 ... g/g_100: the load factor as one clip per tenth */
+  bool bank_series;       /* extension clips bank/bank_0 ... bank/bank_90: the bank angle in steps of 5 degrees */
 } announce_input_t;
 
 #define ANN_CLIPS  4

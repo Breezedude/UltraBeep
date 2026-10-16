@@ -351,12 +351,17 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
     if (in->g_load <= 0.0f) {
       return false;
     }
+    if (in->bank_word) {
+      word(out, n++, "bank_angle");
+    }
+    if (in->bank_series) {
+      int deg5 = (int)(in->bank_deg / 5.0f + 0.5f) * 5; /* "60 Grad" in one go */
+      put(out, n++, "bank/bank_%d", deg5 < 0 ? 0 : deg5 > 90 ? 90 : deg5);
+      break;
+    }
     int deg = (int)(in->bank_deg + 0.5f);
     if (deg > 60) {
       deg = (deg + 5) / 10 * 10; /* the voice pack has 0..60, 70, 80, 90 */
-    }
-    if (in->bank_word) {
-      word(out, n++, "bank_angle");
     }
     put(out, n++, "%d", deg > 90 ? 90 : deg);
     break;
@@ -394,7 +399,8 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
 
 void announce_demo_input(announce_input_t *in)
 {
-  bool glide_word = in->glide_word, g_word = in->g_word, bank_word = in->bank_word, g_series = in->g_series;
+  bool glide_word = in->glide_word, g_word = in->g_word, bank_word = in->bank_word;
+  bool g_series = in->g_series, bank_series = in->bank_series;
   memset(in, 0, sizeof(*in));
   in->in_flight = true;
   in->alt_m = 1234.0f;
@@ -425,6 +431,7 @@ void announce_demo_input(announce_input_t *in)
   in->g_word = g_word;
   in->bank_word = bank_word;
   in->g_series = g_series;
+  in->bank_series = bank_series;
 }
 
 void announce_build(const announce_list_t *l, bool ble_connected, const announce_input_t *in, announcement_t *out)

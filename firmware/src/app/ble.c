@@ -467,7 +467,7 @@ static bool plain_name(const char *s, size_t len, size_t max)
 }
 
 /* "voices/custom/<name>.qoa" or "voices/custom/<folder>/<name>.qoa" with plain names: a user-made
- * voice clip (docs/ble-file-service.md); the folder is the clip's folder in the pack (al, sp, nav, time, g). */
+ * voice clip (docs/ble-file-service.md); the folder is the clip's folder in the pack (al, sp, nav, time, g, bank). */
 static bool clip_file(const char *name)
 {
   static const char prefix[] = CUSTOM_REL "/";
@@ -1117,7 +1117,7 @@ static void handle_put_data(uint16_t handle, const uint8_t *data, uint16_t len)
     if (slash) {
       *slash = 0;
       if (strlen(dir) > strlen(CUSTOM_DIR)) {
-        storage_mkdir(dir); /* the clip's folder (al, sp, nav, time, g) */
+        storage_mkdir(dir); /* the clip's folder (al, sp, nav, time, g, bank) */
       }
     }
   }

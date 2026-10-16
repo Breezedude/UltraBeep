@@ -1898,6 +1898,23 @@ static void test_announce(void)
   CHECK(group_is(&a, 3, "g/g_10", NULL, NULL), "g-load series rounds to tenths: %s", a.clip[3][0]);
   in.g_series = false;
   in.g_word = true;
+  in.g_load = 2.3f;
+  /* with the bank/bank_<deg> series the bank angle is one clip, rounded to 5 degrees */
+  in.bank_series = true;
+  in.bank_word = true;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 4, "bank_angle", "bank/bank_65", NULL), "bank series 64.2: %s %s", a.clip[4][0], a.clip[4][1]);
+  in.bank_word = false;
+  in.bank_deg = 62.4f;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 4, "bank/bank_60", NULL, NULL), "bank series 62.4: %s", a.clip[4][0]);
+  in.bank_deg = 89.9f;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 4, "bank/bank_90", NULL, NULL), "bank series 89.9: %s", a.clip[4][0]);
+  in.bank_deg = 0.0f;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 4, "bank/bank_0", NULL, NULL), "bank series 0: %s", a.clip[4][0]);
+  in.bank_series = false;
   in.bank_deg = 31.0f;
   in.g_load = 0.0f;
   announce_build(&l, true, &in, &a);

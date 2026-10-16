@@ -641,7 +641,8 @@ function renderVoicepack() {
   const catalogueCard = fieldset({ title: "Clips", help: "What a voice pack has and what it says in the language of the " +
       "pack chosen above, in two tables: the clips UltraBeep adds - the original packs do not have them: the launch " +
       "readiness, the pairing request, glide ratio, load and bank in the announcements, the load factor as one clip per " +
-      "tenth of a g (said instead of single numbers once the device has them); generate them and send them to " +
+      "tenth of a g and the bank angle in steps of 5 degrees (said instead of single numbers once the device has them); " +
+      "generate them and send them to " +
       "the device, or build a whole pack - and the clips of the original pack. The filter works in both. ▶ plays a clip " +
       "the device has (the pack's, or one sent to voices/custom), ♪ a clip generated here, ✎ opens it in the editor." },
   customRow("Filter", filter),

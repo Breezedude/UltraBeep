@@ -110,7 +110,7 @@ Used by the configurator's "Status and tests" view and by the test buttons of th
 | `TAPSENS <0..4>` | `OK` | double-tap sensitivity (`system_tapsensitivity_int`); stays until the device is switched off |
 | `MELODY <scale\|chromatic\|sighs\|triplet> <vol>` | `OK` | plays one of the power-off melodies on the piezo |
 | `ANNOUNCE <trigger> <blocks>` | `OK` | speaks a block list (`altitude:ble,climbrate,...`, the format of `announce_<trigger>_items_string`) with fixed demo values at the ground volume: the configurator's play button next to a trigger. `summary` speaks it as the flight summary. |
-| `PUT voices/custom/[<folder>/]<name>.qoa <size> <crc32>` | `READY` … `DONE <crc32>` | a user-made voice clip (mono 22.05 kHz QOA, at most 24 kB); `<name>` is `[a-z0-9_]`, up to 24 characters, `<folder>` (up to 8) the clip's folder in the pack (`al`, `sp`, `nav`, `time`, `g`); folders are created. |
+| `PUT voices/custom/[<folder>/]<name>.qoa <size> <crc32>` | `READY` … `DONE <crc32>` | a user-made voice clip (mono 22.05 kHz QOA, at most 24 kB); `<name>` is `[a-z0-9_]`, up to 24 characters, `<folder>` (up to 8) the clip's folder in the pack (`al`, `sp`, `nav`, `time`, `g`, `bank`); folders are created. |
 | `DEL voices/custom/[<folder>/]<name>.qoa` | `OK` | removes such a clip |
 | `LIST voices/custom` | `OK <size>` … `DONE <crc32>` | the clips on the card, one `[<folder>/]<name>.qoa <size>` per line |
 | `PUT update <size> <crc32>` | `READY` … `DONE <crc32>` | a firmware image (`.update`, up to 400 kB), streamed to `0:/ultrabip_ultrabeep.update`; not in flight |

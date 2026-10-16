@@ -234,7 +234,7 @@ static float climb_hist[CLIMB_AVG_S];
 static unsigned climb_i, climb_n;
 static thermal_t thermal;  /* circling, climb phases, wind and glide (thermal.c) */
 /* extension clips in the voice pack or voices/custom: bit 0 glide_ratio, 1 g_load, 2 bank_angle, 3 the g/g_<tenths>
- * series; -1: not looked up since the pack or the custom clips changed */
+ * series, 4 the bank/bank_<deg> series; -1: not looked up since the pack or the custom clips changed */
 static int ext_words = -1;
 
 void system_voice_clips_changed(void)
@@ -291,12 +291,14 @@ static void announce_input(announce_input_t *in)
   if (ext_words < 0) {
     ext_words = (storage_voice_exists("glide_ratio") ? 1 : 0) | (storage_voice_exists("g_load") ? 2 : 0) |
                 (storage_voice_exists("bank_angle") ? 4 : 0) |
-                (storage_voice_exists("g/g_10") && storage_voice_exists("g/g_100") ? 8 : 0);
+                (storage_voice_exists("g/g_10") && storage_voice_exists("g/g_100") ? 8 : 0) |
+                (storage_voice_exists("bank/bank_5") && storage_voice_exists("bank/bank_90") ? 16 : 0);
   }
   in->glide_word = (ext_words & 1) != 0;
   in->g_word = (ext_words & 2) != 0;
   in->bank_word = (ext_words & 4) != 0;
   in->g_series = (ext_words & 8) != 0;
+  in->bank_series = (ext_words & 16) != 0;
 }
 
 /* Replaces what is still to be spoken. */
