@@ -140,6 +140,114 @@ function tonesFromJson(text) {
   return { lift, sink, alarm: j.sinkAlarm === undefined ? true : !!j.sinkAlarm, points };
 }
 
+/* ---- XCTracer tone settings: ClimbToneOnThreshold=0.2 ... and tone=<m/s>,<Hz>,<cycle ms>,<duty %> lines ---- */
+
+/* Pitch, period and duty of point list at a climb rate in cm/s: the firmware's interpolation, clamped at the ends. */
+function curveValuesAt(points, vz) {
+  const p = points;
+  if (vz <= p[0].vz) return { freq: p[0].freq, period: p[0].duration, duty: p[0].duty };
+  const last = p[p.length - 1];
+  if (vz >= last.vz) return { freq: last.freq, period: last.duration, duty: last.duty };
+  let i = 0;
+  while (i < p.length - 2 && vz > p[i + 1].vz) i++;
+  const span = p[i + 1].vz - p[i].vz, x = span > 0 ? (vz - p[i].vz) / span : 0;
+  const lerp = (a, b) => a + (b - a) * x;
+  return { freq: lerp(p[i].freq, p[i + 1].freq), period: lerp(p[i].duration, p[i + 1].duration), duty: lerp(p[i].duty, p[i + 1].duty) };
+}
+
+/*
+ * count points out of more (or fewer): drops the point whose loss changes the curve least where it sounds
+ * (at and above lift, at and below sink; points in the silent band between only anchor the interpolation)
+ * until count are left, and fills up with interpolated points in the widest gaps. Returns the points and the
+ * largest change: pitch and period in percent, duty in points.
+ */
+function fitTonePoints(points, count, lift, sink) {
+  const lo = Math.min(points[0].vz, sink) - 100, hi = Math.max(points[points.length - 1].vz, lift) + 100;
+  const grid = [];
+  for (let vz = lo; vz <= hi; vz += 5) if (vz <= sink || vz >= lift) grid.push(vz);
+  const change = (cand) => {
+    let e = 0;
+    for (const vz of grid) {
+      const a = curveValuesAt(points, vz), b = curveValuesAt(cand, vz);
+      e = Math.max(e, (Math.abs(b.freq - a.freq) / Math.max(a.freq, 1)) * 100,
+        (Math.abs(b.period - a.period) / Math.max(a.period, 1)) * 100, Math.abs(b.duty - a.duty));
+    }
+    return e;
+  };
+  const pts = points.map((p) => ({ ...p }));
+  while (pts.length > count) {
+    let best = null;
+    for (let i = 0; i < pts.length; i++) {
+      const e = change(pts.filter((_, k) => k !== i));
+      if (!best || e < best.e) best = { i, e };
+    }
+    pts.splice(best.i, 1);
+  }
+  while (pts.length < count) {
+    let g = 0;
+    for (let i = 1; i < pts.length - 1; i++) if (pts[i + 1].vz - pts[i].vz > pts[g + 1].vz - pts[g].vz) g = i;
+    const vz = Math.round((pts[g].vz + pts[g + 1].vz) / 2), v = curveValuesAt(pts, vz);
+    pts.splice(g + 1, 0, { vz, freq: Math.round(v.freq), duration: Math.round(v.period), duty: Math.round(v.duty) });
+  }
+  return { points: pts, change: change(pts) };
+}
+
+/*
+ * An XCTracer tone setting (pasted or a whole configuration file; other keys are skipped). The device has
+ * TONE_POINTS points: more are fitted (fitTonePoints), and its hysteresis is a fixed 0.05 m/s (the XCTracer's
+ * own default: on at 0.2, off at 0.15). Returns the curve and a note on what was adapted; throws on errors.
+ */
+function tonesFromXcTracer(text) {
+  const values = {}, tones = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+    const m = line.match(/^([A-Za-z_]\w*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    if (key === "tone") {
+      const v = m[2].split(",").map((s) => Number(s.trim()));
+      if (v.length !== 4 || v.some((x) => !Number.isFinite(x))) throw new Error(`"${line}": a tone needs climb, frequency, cycle and duty`);
+      tones.push({ vz: Math.round(Math.min(20, Math.max(-20, v[0])) * 100), freq: Math.round(Math.min(5000, Math.max(0, v[1]))),
+        duration: Math.round(Math.min(5000, Math.max(20, v[2]))), duty: Math.round(Math.min(100, Math.max(0, v[3]))) });
+    } else {
+      values[key] = m[2].trim();
+    }
+  }
+  if (tones.length < 2) throw new Error("No XCTracer tone lines (tone=<m/s>,<Hz>,<cycle ms>,<duty %>) found");
+  tones.sort((a, b) => a.vz - b.vz);
+  const threshold = (key, def, min, max) => {
+    const x = Number(values[key]);
+    return Number.isFinite(x) ? Math.round(Math.min(max, Math.max(min, x)) * 100) : def;
+  };
+  const lift = threshold("climbtoneonthreshold", TONE_DEFAULT_LIFT, 0, 2);
+  const sink = threshold("sinktoneonthreshold", TONE_DEFAULT_SINK, -20, 0);
+  const notes = [];
+  const fit = fitTonePoints(tones, TONE_POINTS, lift, sink);
+  if (tones.length !== TONE_POINTS) {
+    notes.push(`${tones.length} points ${tones.length > TONE_POINTS ? "fitted into" : "filled up to"} ${TONE_POINTS}` +
+      (fit.change < 0.5 ? ", the curve sounds the same" : `, the curve differs by up to ${fit.change.toFixed(1)} % where it sounds`));
+  }
+  const offOf = (key, on) => {
+    const x = Number(values[key]);
+    return Number.isFinite(x) ? Math.abs(on / 100 - x) : null;
+  };
+  const climbHyst = offOf("climbtoneoffthreshold", lift), sinkHyst = offOf("sinktoneoffthreshold", sink);
+  /* up to 0.1 m/s the difference to the device's 0.05 cannot be heard (the XCTracer's own: 0.05 and 0) */
+  if ((climbHyst !== null && climbHyst > 0.1) || (sinkHyst !== null && sinkHyst > 0.1)) {
+    notes.push("the off thresholds are not taken: the device keeps its fixed 0.05 m/s");
+  }
+  return { curve: { lift, sink, alarm: true, points: fit.points }, note: notes.join("; ") };
+}
+
+/* A pasted curve in either format: JSON as exported, or XCTracer tone settings. Returns { curve, note }. */
+function tonesFromText(text) {
+  const t = text.trim();
+  if (t.startsWith("{")) return { curve: tonesFromJson(t), note: "" };
+  if (/^\s*tone\s*=/im.test(t)) return tonesFromXcTracer(t);
+  throw new Error("Neither a tone curve as JSON nor XCTracer tone settings (tone=... lines)");
+}
+
 /* ---- interactive editor ---- */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -584,4 +692,8 @@ class TonePreview {
       this.osc = null;
     }
   }
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { varioTone, tonesFromJson, tonesFromXcTracer, tonesFromText, fitTonePoints, curveValuesAt };
 }

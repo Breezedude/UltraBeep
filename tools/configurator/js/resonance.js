@@ -147,12 +147,30 @@ function analyzeSweep(x, rate, marks, freqs, opt = {}) {
     return { f, pos, levels, heardDb: 10 * Math.log10(Math.max(heard, 1e-18)) };
   });
 
+  /* the microphone's band: a Bluetooth headset in hands-free mode samples at 16 kHz, and the browser's resampling
+   * leaves next to nothing above 8 kHz (2026-10-16: images of the tones only, "peaks" at 9.6 and 11 kHz that were
+   * none; the background there 40-70 dB below that of 1-5 kHz, where a real microphone's falls by 15 at most).
+   * The band ends at the lowest frequency above which most frequencies are that empty; the codec's filter dims
+   * the last tenth. */
+  const all = [];
+  for (const s of steps) if (s) for (const l of s.levels) all.push(l);
+  all.sort((a, b) => a.f - b.f);
+  const mid = all.filter((l) => l.f >= 1000 && l.f <= 5000).map((l) => l.noiseDb).sort((a, b) => a - b);
+  const emptyDb = mid.length ? mid[Math.floor(mid.length / 2)] - 30 : -150;
+  let bandHz = rate / 2;
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].f < 2000 || all[i].noiseDb >= emptyDb) continue;
+    const above = all.slice(i), empty = above.filter((l) => l.noiseDb < emptyDb).length;
+    if (empty >= 3 && empty >= 0.8 * above.length) { bandHz = all[i].f; break; }
+  }
+  const usableHz = Math.min(o.respMaxHz, bandHz < rate / 2 ? 0.9 * bandHz : rate / 2);
+
   /* the response: harmonic n at n*f, plus 20*log10(n) for the square wave's 1/n */
   const points = [];
   for (const s of steps) {
     if (!s) continue;
     for (const l of s.levels) {
-      if (!o.responseHarmonics.includes(l.n) || l.f > o.respMaxHz || l.db - l.noiseDb < o.minSnrDb) continue;
+      if (!o.responseHarmonics.includes(l.n) || l.f > usableHz || l.db - l.noiseDb < o.minSnrDb) continue;
       points.push({ f: l.f, db: l.db + 20 * Math.log10(l.n), n: l.n });
     }
   }
@@ -195,8 +213,9 @@ function analyzeSweep(x, rate, marks, freqs, opt = {}) {
   const snr = valid.map((s) => s.levels.reduce((m, l) => Math.max(m, l.db - l.noiseDb), -Infinity));
   return {
     rate, freqs, marks, steps, points: normPoints, curve, heard,
-    peaks: findPeaks(curve, 6, 500, 12000).slice(0, 3),
+    peaks: findPeaks(curve, 6, 500, Math.min(12000, 0.95 * usableHz)).slice(0, 3),
     loudest: findPeaks(heard, 2, 300, 1500).slice(0, 3),
+    bandHz: bandHz < rate / 2 ? bandHz : null, usableHz,
     harmonicOffsetDb, harmonicPairs: diffs.length,
     clippedShare: inTones ? clipped / inTones : 0,
     bestSnrDb: snr.length ? Math.max(...snr) : 0,
@@ -315,6 +334,11 @@ function resonanceChart({ fMin, fMax, series, marks = [], band = null, dbMin = -
 function resonanceResult(r, mic, profileBand) {
   const out = [];
   const warn = [];
+  if (r.bandHz) {
+    warn.push(`The microphone delivers nothing above ${fmtHz(r.bandHz)} (a Bluetooth headset in hands-free mode samples ` +
+      `at 16 kHz): the response ends at ${fmtHz(r.usableHz)}. For the harmonics above use a built-in or wired microphone, ` +
+      "or a wireless one through its USB receiver.");
+  }
   if (r.clippedShare > 0.001) warn.push("The recording clipped: move the microphone further away or choose a lower volume.");
   if (r.bestSnrDb < 20) warn.push(`The tones stand only ${Math.round(r.bestSnrDb)} dB above the background: bring the ` +
     "microphone closer or make the room quieter.");
@@ -328,7 +352,7 @@ function resonanceResult(r, mic, profileBand) {
   for (const w of warn) out.push(el("p", { class: "hint warn" }, w));
 
   out.push(el("div", { class: "subhead" }, "Response of piezo and housing"));
-  out.push(resonanceChart({ fMin: 200, fMax: Math.min(20000, r.rate / 2), marks: r.peaks, series: [
+  out.push(resonanceChart({ fMin: 200, fMax: Math.min(20000, r.bandHz || r.rate / 2), marks: r.peaks, series: [
     { kind: "line", cls: "resp", points: r.curve },
     { kind: "dots", cls: "h1", points: r.points.filter((p) => p.n === 1) },
     { kind: "dots", cls: "h3", points: r.points.filter((p) => p.n === 3) },
@@ -431,7 +455,9 @@ function resonanceFieldset() {
         "Download recording (WAV)"),
       el("button", { onclick: () => download(`piezo-sweep-${stamp}.json`, JSON.stringify({
         volume: vol, toneMs: RES.toneMs, gapMs: RES.gapMs, rate: last.r.rate, freqs: last.r.freqs, marks: last.r.marks,
-        microphone: rec.info, peaks: last.r.peaks, loudest: last.r.loudest, curve: last.r.curve, heard: last.r.heard,
+        microphone: rec.info, bandHz: last.r.bandHz, usableHz: last.r.usableHz, harmonicOffsetDb: last.r.harmonicOffsetDb,
+        clippedShare: last.r.clippedShare, bestSnrDb: last.r.bestSnrDb,
+        peaks: last.r.peaks, loudest: last.r.loudest, curve: last.r.curve, heard: last.r.heard,
         steps: last.r.steps }, null, 1)) }, "Download the values (JSON)"));
   }
 

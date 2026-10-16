@@ -565,5 +565,5 @@ const STOCK_TONES = [
 const TONE_POINTS = 8;
 
 if (typeof module !== "undefined") {
-  module.exports = { TIME_ZONES, dstTable, dstTableStandardOffset };
+  module.exports = { TIME_ZONES, dstTable, dstTableStandardOffset, STOCK_TONES, TONE_POINTS };
 }

@@ -863,19 +863,27 @@ function toneSection(n) {
       }
     } }, "Copy")));
   const importText = el("textarea", { class: "json", rows: 14, spellcheck: "false",
-    placeholder: "Paste a tone curve (JSON, as from \"Export\") here.", "aria-label": "tone curve to import" });
+    placeholder: "Paste a tone curve here: JSON as from \"Export\", or the XCTracer's tone settings " +
+      "(ClimbToneOnThreshold=0.2 ... tone=1.16,550,552,52 ...).", "aria-label": "tone curve to import" });
   const importError = el("p", { class: "error" }, "");
+  const importFile = el("input", { type: "file", accept: ".txt,.json,text/plain,application/json", hidden: true });
+  importFile.addEventListener("change", async () => {
+    const f = importFile.files && importFile.files[0];
+    if (f) importText.value = await f.text();
+    importFile.value = "";
+  });
   const importPanel = el("div", { class: "json-panel", hidden: true }, importText, importError,
     el("div", { class: "buttons" }, el("button", { class: "primary", onclick: () => {
       try {
-        setCurve(tonesFromJson(importText.value), true);
+        const { curve: c, note } = tonesFromText(importText.value);
+        setCurve(c, true);
         importError.textContent = "";
         importPanel.hidden = true;
-        setMessage("Tone curve imported - save to keep it.");
+        setMessage(`Tone curve imported${note ? ` (${note})` : ""} - save to keep it.`);
       } catch (e) {
         importError.textContent = e.message;
       }
-    } }, "Apply")));
+    } }, "Apply"), el("button", { onclick: () => importFile.click() }, "Open a file…"), importFile));
   const toggle = (panel, other, fill) => () => {
     other.hidden = true;
     panel.hidden = !panel.hidden;

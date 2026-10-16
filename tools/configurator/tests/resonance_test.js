@@ -86,6 +86,33 @@ check(!r.points.some((p) => p.n === 1 && p.f === missing), `the silent step ${mi
 check(r.loudest.length > 0 && r.loudest.some((p) => [1067, 640, 457].some((f) => Math.abs(p.f / f - 1) < 0.06)),
   `loudest tones: ${r.loudest.map((p) => p.f).join(", ")} Hz`);
 check(r.clippedShare === 0 && r.bestSnrDb > 40, `no clipping, best SNR ${r.bestSnrDb.toFixed(0)} dB`);
+check(r.bandHz === null && r.usableHz === RES.respMaxHz, "a full-band microphone: no band limit");
+
+/* the same through a Bluetooth headset in hands-free mode: nothing above 8 kHz, the background white noise through
+ * a steep low-pass at 7.2 kHz (2026-10-16: the response showed peaks at 9.6 and 11 kHz that were none) */
+const xb = new Float32Array(total);
+const TAPS = 301, fc = 7200 / rate;
+const fir = Array.from({ length: TAPS }, (_, k) => {
+  const m = k - (TAPS - 1) / 2, sinc = m === 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * m) / (Math.PI * m);
+  return sinc * (0.42 - 0.5 * Math.cos((2 * Math.PI * k) / (TAPS - 1)) + 0.08 * Math.cos((4 * Math.PI * k) / (TAPS - 1)));
+});
+const white = Float32Array.from({ length: total + TAPS }, () => (rnd() - 0.5) * 4e-4);
+for (let i = 0; i < total; i++) { let v = 0; for (let k = 0; k < TAPS; k++) v += fir[k] * white[i + k]; xb[i] = v; }
+t = Math.round(RES.noiseS * rate);
+for (const f of freqs) {
+  const start = t + Math.round((0.03 + 0.2 * rnd()) * rate);
+  for (const h of harmonics(f)) {
+    if (h.n * f >= 7900) continue;
+    const w = (2 * Math.PI * h.n * f) / rate, amp = h.amp * scale;
+    for (let i = 0; i < toneLen; i++) xb[start + i] += amp * Math.sin(w * i + h.ph);
+  }
+  t += stepLen;
+}
+const rb = analyzeSweep(xb, rate, marks, freqs);
+check(rb.bandHz > 7000 && rb.bandHz < 8800 && rb.usableHz < 8000 && rb.points.every((q) => q.f <= rb.usableHz),
+  `band-limited microphone found: ${rb.bandHz} Hz, response to ${Math.round(rb.usableHz)} Hz`);
+check(Math.abs(rb.peaks[0].f / 3200 - 1) < 0.05 && rb.peaks.every((q) => q.f < 8000),
+  `band-limited: peaks ${rb.peaks.map((q) => q.f).join(", ")} Hz`);
 
 const wav = wavBytes(x.subarray(0, 1000), rate);
 const dv = new DataView(wav.buffer);
