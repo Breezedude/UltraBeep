@@ -165,7 +165,7 @@ Other values round to the nearest step (30 → 40, 10 → 20).
     `wait_for_takeoff` (the launch readiness below), `press_button_to_confirm` (the pairing request),
     `glide_ratio`, `g_load` and `bank_angle` (the announcement blocks), `thermal_exit`, the load factor
     series `g/g_0` … `g/g_100` (0.0 to 10.0 g in tenths, one clip each: "2,3 G", since 0.52), the bank
-    angle series `bank/bank_0` … `bank/bank_90` (steps of 5 degrees: "60 Grad", since 0.53), and the
+    angle series `bank/bank_0` … `bank/bank_180` (steps of 5 degrees: "60 Grad", since 0.53), and the
     profiles' voice lines (`identity_voiceclip_string`). Everything else the firmware says is in the stock packs.
 
 ## If found
@@ -209,9 +209,9 @@ Blocks: `altitude`, `climbrate` (10 s mean), `speed`, `heading`, `duration` (fli
 signal, no voice), `thermalclimb` (mean climb since the circling began), `thermalgain` (height
 gained since then), `maxg` (peak load factor of the flight or the manoeuvre: the one clip `g/g_23` when
 the device has that series, else "2 dot 3" from single numbers), `bank`
-(bank angle of a coordinated turn at that load, degrees, a size without a side: the one
-clip `bank/bank_60` in steps of 5 when the device has that series, else the single number), and for the summary `maxaltitude`,
-`maxspeed`, `maxclimb` (max climb, a short pause, then the max sink as a negative number).
+(bank angle of a coordinated turn at that load, degrees, a size without a side, below 90: the
+one clip `bank/bank_60` in steps of 5 when the device has that series, else the single number), and
+for the summary `maxaltitude`, `maxspeed`, `maxclimb` (max climb, a short pause, then the max sink as a negative number).
 Blocks without data (no fix, no wind estimate yet, flight time before the takeoff) are left out.
 
 The derived list while `announce_<trigger>_items_string` is missing:
@@ -239,7 +239,8 @@ Details of the triggers (firmware/src/app/announce.c):
   summary `maxg` is the peak of the flight. Extension clips `g_load` and `bank_angle` (like
   `glide_ratio`) are said first when the voice pack has them. `maxg` takes the series `g/g_<tenths>`
   when `g/g_10` and `g/g_100` are there (above 10 g: `g/g_100`; the accelerometer measures to 8 g),
-  `bank` the series `bank/bank_<deg>` when `bank/bank_5` and `bank/bank_90` are there.
+  `bank` the series `bank/bank_<deg>` when `bank/bank_5` and `bank/bank_180` are there (the clips
+  above 90 are for a measured roll angle; the load of a coordinated turn gives less than 90).
   The device looks the extension clips up again when the voice pack changes or a clip in
   `voices/custom` is sent or deleted over Bluetooth (0.52).
 * A list holds up to 10 blocks, each once.

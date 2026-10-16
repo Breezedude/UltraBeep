@@ -431,8 +431,9 @@ function voicepackInfo(id) {
  * (973 clips). profile_custom_<n>, the own profile names, are extension clips too but live outside the
  * catalogue (the profile's voice line). So are the clips of the folders in VOICEPACK_EXTENSION_FOLDERS, which
  * the device says instead of single numbers once it has them: g/g_<tenths>, the load factor 0.0 to 10.0 g as
- * one clip each ("2,3 G" instead of "2" "dot" "3"), and bank/bank_<deg>, the bank angle 0 to 90 degrees in
- * steps of 5 ("60 Grad"; a size without a side: it comes from the load of a coordinated turn).
+ * one clip each ("2,3 G" instead of "2" "dot" "3"), and bank/bank_<deg>, the bank angle 0 to 180 degrees in
+ * steps of 5 ("60 Grad"; a size without a side). Taken from the load of a coordinated turn the angle stays
+ * below 90; the clips beyond are there for a measured roll angle (over the top of a wingover).
  */
 const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_to_confirm", "glide_ratio", "g_load",
   "bank_angle", "thermal_exit"]);
@@ -468,7 +469,7 @@ function voicepackClips(lang) {
   /* the load factor in tenths of a g: the accelerometer measures to 8 g and is good to about 0.1 g */
   for (let t = 0; t <= 100; t++) add(`g/g_${t}`, L.g(t / 10));
   /* the bank angle, acos(1/load): 0.1 g is 2 degrees at 60 and more at less, so steps of 5 */
-  for (let d = 0; d <= 90; d += 5) add(`bank/bank_${d}`, L.deg(d));
+  for (let d = 0; d <= 180; d += 5) add(`bank/bank_${d}`, L.deg(d));
   for (const [name, text] of Object.entries(L.words)) add(name, text);
   return out;
 }

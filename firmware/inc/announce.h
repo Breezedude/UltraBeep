@@ -132,7 +132,7 @@ typedef struct {
   float max_sink_ms;      /* positive */
   bool glide_word, g_word, bank_word; /* extension clips glide_ratio, g_load, bank_angle in the voice pack */
   bool g_series;          /* extension clips g/g_0 ... g/g_100: the load factor as one clip per tenth */
-  bool bank_series;       /* extension clips bank/bank_0 ... bank/bank_90: the bank angle in steps of 5 degrees */
+  bool bank_series;       /* extension clips bank/bank_0 ... bank/bank_180: the bank angle in steps of 5 degrees */
 } announce_input_t;
 
 #define ANN_CLIPS  4

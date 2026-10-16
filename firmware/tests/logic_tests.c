@@ -1911,6 +1911,12 @@ static void test_announce(void)
   in.bank_deg = 89.9f;
   announce_build(&l, false, &in, &a);
   CHECK(group_is(&a, 4, "bank/bank_90", NULL, NULL), "bank series 89.9: %s", a.clip[4][0]);
+  in.bank_deg = 133.0f; /* a measured roll angle over the top */
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 4, "bank/bank_135", NULL, NULL), "bank series 133: %s", a.clip[4][0]);
+  in.bank_deg = 200.0f;
+  announce_build(&l, false, &in, &a);
+  CHECK(group_is(&a, 4, "bank/bank_180", NULL, NULL), "bank series above 180: %s", a.clip[4][0]);
   in.bank_deg = 0.0f;
   announce_build(&l, false, &in, &a);
   CHECK(group_is(&a, 4, "bank/bank_0", NULL, NULL), "bank series 0: %s", a.clip[4][0]);

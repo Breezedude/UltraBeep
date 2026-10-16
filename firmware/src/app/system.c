@@ -292,7 +292,7 @@ static void announce_input(announce_input_t *in)
     ext_words = (storage_voice_exists("glide_ratio") ? 1 : 0) | (storage_voice_exists("g_load") ? 2 : 0) |
                 (storage_voice_exists("bank_angle") ? 4 : 0) |
                 (storage_voice_exists("g/g_10") && storage_voice_exists("g/g_100") ? 8 : 0) |
-                (storage_voice_exists("bank/bank_5") && storage_voice_exists("bank/bank_90") ? 16 : 0);
+                (storage_voice_exists("bank/bank_5") && storage_voice_exists("bank/bank_180") ? 16 : 0);
   }
   in->glide_word = (ext_words & 1) != 0;
   in->g_word = (ext_words & 2) != 0;

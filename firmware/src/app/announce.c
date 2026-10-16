@@ -356,7 +356,7 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
     }
     if (in->bank_series) {
       int deg5 = (int)(in->bank_deg / 5.0f + 0.5f) * 5; /* "60 Grad" in one go */
-      put(out, n++, "bank/bank_%d", deg5 < 0 ? 0 : deg5 > 90 ? 90 : deg5);
+      put(out, n++, "bank/bank_%d", deg5 < 0 ? 0 : deg5 > 180 ? 180 : deg5);
       break;
     }
     int deg = (int)(in->bank_deg + 0.5f);
