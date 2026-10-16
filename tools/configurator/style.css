@@ -304,6 +304,25 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .legend .key.duty { border-radius: 50%; background: var(--duty); }
 .tone-editor { width: 100%; min-width: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }
 .tone-svg { display: block; overflow: visible; font-family: inherit; }
+/* piezo resonance measurement (resonance.js) */
+.res-svg { display: block; width: 100%; max-width: 720px; height: auto; font-family: inherit; margin: 6px 0 2px; }
+.res-svg .plot { fill: color-mix(in srgb, var(--bg) 55%, var(--panel)); }
+.res-svg .grid { stroke: var(--border); stroke-width: 1; }
+.res-svg .tick { fill: var(--muted); font-size: 11px; }
+.res-svg .band { fill: color-mix(in srgb, var(--lift) 14%, transparent); }
+.res-svg .band-text { fill: var(--lift); font-size: 11px; }
+.res-svg .line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.res-svg .line.resp { stroke: var(--muted); stroke-width: 1.5; }
+.res-svg .line.heard { stroke: var(--accent); }
+.res-svg .dot { stroke: none; opacity: .9; }
+.res-svg .h1, .res-legend .h1 { fill: var(--accent); color: var(--accent); }
+.res-svg .h3, .res-legend .h3 { fill: var(--warn); color: var(--warn); }
+.res-svg .h5, .res-legend .h5 { fill: var(--lift); color: var(--lift); }
+.res-svg .h7, .res-legend .h7 { fill: var(--duty); color: var(--duty); }
+.res-svg .mark { stroke: var(--error); stroke-width: 1; stroke-dasharray: 3 3; }
+.res-svg .mark-text { fill: var(--error); font-size: 11px; font-weight: 600; }
+.res-list { margin: 4px 0 8px; padding-left: 20px; font-size: 14px; }
+.hint.warn { color: var(--warn); }
 .tone-svg .plot { fill: color-mix(in srgb, var(--bg) 55%, var(--panel)); }
 .tone-svg .grid { stroke: var(--border); stroke-width: 1; }
 .tone-svg .grid.zero { stroke: color-mix(in srgb, var(--muted) 60%, transparent); }

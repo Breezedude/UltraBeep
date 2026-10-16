@@ -98,7 +98,7 @@ Used by the configurator's "Status and tests" view and by the test buttons of th
 | Command | Reply | Effect |
 |---|---|---|
 | `LIVE` | `LIVE st=… p=… t=… alt=… vz=… acc=… rest=… fused=… fix=… sats=… hdop=… gs=… lat=… lon=… vbat=… rec=… piezo=… quiet=… pump=… taps=… tapg=… tsens=…` | one snapshot, see below |
-| `TONE <Hz> <ms> <vol>` | `OK` | a piezo tone; volume as the piezo settings: 0, 20 … 100 = steps (docs/config-ext-format.md) |
+| `TONE <Hz> <ms> <vol>` | `OK` | a piezo tone (10–5000 Hz); volume as the piezo settings: 0, 20 … 100 = steps (docs/config-ext-format.md). The configurator's piezo resonance measurement plays a sweep of these and records it with the microphone (tools/configurator/js/resonance.js). |
 | `SPK <Hz> <ms> <vol>` | `OK` | the same tone on the speaker; volume 0–100 % perceived loudness |
 | `SAY <clip> <vol>` | `OK` | plays a clip of the voice pack, e.g. `vol_1` |
 | `TONES <lift> <sink> <alarm> <vz>,<f>,<p>,<d> ×8 [<weak> [<sweep> [<integration>]]]` | `OK` | sets the vario tone curve for the test (see below); it replaces the profile's curve until `TEST off` |

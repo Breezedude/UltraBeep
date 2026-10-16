@@ -1125,6 +1125,7 @@ function renderStatus() {
   state.cleanup = () => {
     if (timer) clearInterval(timer);
     if (varioMode !== "off") deviceTest("TEST off");
+    resonanceStop(); /* resonance.js: a running sweep ends, the microphone is freed */
   };
 
   const r = (label, control, extra = null) => customRow(label, control, null, extra);
@@ -1150,6 +1151,7 @@ function renderStatus() {
       el("p", { class: "hint" }, "Experiment: \"Pulse width\" shorts the piezo between the pulses. It is a little " +
         "quieter, uses a little less current and sounds different. Applies to all piezo sounds until the device " +
         "is switched off.")),
+    resonanceFieldset(),
     fieldset("Double tap", r("Sensitivity (test)", tapSel),
       el("p", { class: "hint" }, "Knock twice on the device. The live values count the double taps and show how hard " +
         "the last tap was. The sensitivity chosen here applies until the device is switched off; the profile's " +
