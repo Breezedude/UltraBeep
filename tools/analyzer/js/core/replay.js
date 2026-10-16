@@ -61,6 +61,7 @@ export function buildContext(log, opts = {}) {
   const imuT = new Float64Array(log.imu.n);
   const imuAcc = new Float32Array(log.imu.n);
   const imuGyro = new Float32Array(log.imu.n);
+  const imuTurn = new Float32Array(log.imu.n); /* |w| signed by its direction about the specific force (sensors.c turn) */
   const a = [0, 0, 0], w = [0, 0, 0];
   const aDir = [0, 0, 0]; // specific force direction, 0.5 s mean
   const DIR_ALPHA = 0.02;
@@ -75,6 +76,7 @@ export function buildContext(log, opts = {}) {
       imuAcc[j] = an;
       imuGyro[j] = gn;
       if (an > 0) for (let k = 0; k < 3; k++) aDir[k] += DIR_ALPHA * (a[k] / an - aDir[k]);
+      imuTurn[j] = w[0] * aDir[0] + w[1] * aDir[1] + w[2] * aDir[2] < 0 ? gn : -gn;
       sa += an; sg += gn; if (gn > mg) mg = gn; c++;
       sWx += w[0]; sWy += w[1]; sWz += w[2];
       j++;
@@ -122,7 +124,7 @@ export function buildContext(log, opts = {}) {
     baroRate: log.header.baroRate || 32,
     imuRate: log.header.imuRate || 100,
     loggedVz: b.vz, loggedAlt: b.alt,
-    accNorm, gyroNorm, gyroMax, yawRate, imuT, imuAcc, imuGyro,
+    accNorm, gyroNorm, gyroMax, yawRate, imuT, imuAcc, imuGyro, imuTurn,
     nmea, fixes: fx, fixT, fixRate: fixRate(fx),
     gnssClimb, gnssAlt, gnssSpeed, trackRate,
     events, messages,

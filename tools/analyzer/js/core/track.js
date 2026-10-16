@@ -154,17 +154,18 @@ export function contextSeries(ctx) {
 export function fineManeuvers(ctx, t0 = -Infinity, t1 = Infinity) {
   const det = new FineManeuverDetector();
   const out = [];
-  const FAST_ALPHA = 0.1, TICK_S = 0.05;
-  let fastA = 0, fastW = 0, started = false, lastTick = -Infinity;
+  const FAST_ALPHA = 0.1, TURN_ALPHA = 0.02, TICK_S = 0.05;
+  let fastA = 0, fastW = 0, turn = 0, started = false, lastTick = -Infinity;
   for (let k = 0; k < ctx.imuT.length; k++) {
     const g = ctx.imuAcc[k] / G0, w = ctx.imuGyro[k];
     if (!started) { fastA = g; started = true; } else fastA += FAST_ALPHA * (g - fastA);
     fastW += FAST_ALPHA * (w - fastW);
+    if (ctx.imuTurn) turn += TURN_ALPHA * (ctx.imuTurn[k] - turn);
     const t = ctx.imuT[k];
     if (t < t0 || t > t1 || t - lastTick < TICK_S) continue;
     const dt = lastTick === -Infinity ? TICK_S : t - lastTick;
     lastTick = t;
-    const done = det.update(t, fastA, fastW, dt);
+    const done = det.update(t, fastA, fastW, dt, turn);
     if (done) out.push(done);
   }
   return { maneuvers: out, maxLoad: det.gMaxFlight };

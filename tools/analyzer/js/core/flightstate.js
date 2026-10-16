@@ -428,32 +428,89 @@ export function bankOfLoad(n) {
  * (track.js fineManeuvers), the per-second one serves IGC files.
  */
 const MAN_SMOOTH_S = 0.2;
+/* maneuver.c 0.54: wingovers by turn reversals (the signed turn rate, 0.5 s mean), spirals by load and rate. */
+const TURN = { dps: 40, minS: 0.5, maxS: 5, mergeS: 0.6, maxDps: 200, reverseS: 2.5, wingoverG: 1.8, settleS: 30, earlyS: 1 };
 export class FineManeuverDetector {
   constructor() {
-    this.n = 1; this.started = false; this.sinceLowS = MAN.lowWindowS + 1; this.highS = 0; this.calmS = 0;
-    this.active = false; this.kind = null; this.nMax = 0; this.gMaxFlight = 0; this.startT = 0;
+    this.n = 1; this.started = false; this.flightS = 0; this.highS = 0; this.calmS = 0;
+    this.active = false; this.kind = null; this.nMax = 0; this.reversals = 0; this.gMaxFlight = 0; this.startT = 0;
+    this.turnSign = 0; this.turnS = 0; this.turnGapS = 0; this.turnPeakG = 0; this.turnPeakDps = 0;
+    this.lastSign = 0; this.lastS = 0; this.lastPeakG = 0; this.lastPeakDps = 0; this.sinceLastS = TURN.reverseS + 1;
+    this.betweenPeakG = 0; this.pending = false;
   }
-  /* one tick: the smoothed load [g] and rotation rate [°/s], dt in seconds; returns a finished manoeuvre or null */
-  update(t, loadG, rateDps, dt) {
+  endTurn() {
+    if (this.turnS >= TURN.minS) {
+      this.lastSign = this.turnSign; this.lastS = this.turnS; this.lastPeakG = this.turnPeakG;
+      this.lastPeakDps = this.turnPeakDps; this.sinceLastS = this.turnGapS; this.betweenPeakG = 0;
+    }
+    this.turnSign = 0; this.pending = false;
+  }
+  /* true when a swing the other way was just confirmed */
+  trackTurns(n, turnDps, dt) {
+    const rate = Math.abs(turnDps);
+    const s = turnDps >= TURN.dps ? 1 : turnDps <= -TURN.dps ? -1 : 0;
+    if (this.turnSign !== 0) {
+      if (s === this.turnSign) { this.turnS += dt + this.turnGapS; this.turnGapS = 0; }
+      else { this.turnGapS += dt; if (s !== 0 || this.turnGapS > TURN.mergeS) this.endTurn(); }
+    }
+    if (this.turnSign === 0) {
+      this.sinceLastS += dt;
+      if (n > this.betweenPeakG) this.betweenPeakG = n;
+      if (s !== 0) {
+        this.turnStarted = true;
+        this.turnSign = s; this.turnS = 0; this.turnGapS = 0; this.turnPeakG = n; this.turnPeakDps = rate;
+        this.pending = this.lastSign === -s && this.sinceLastS <= TURN.reverseS && this.lastS <= TURN.maxS &&
+          this.lastPeakDps <= TURN.maxDps && this.flightS >= TURN.settleS;
+      }
+    }
+    if (this.turnSign === 0) return false;
+    if (n > this.turnPeakG) this.turnPeakG = n;
+    if (rate > this.turnPeakDps && s === this.turnSign) this.turnPeakDps = rate;
+    if (!this.pending || this.turnS < TURN.minS) return false;
+    this.pending = false;
+    return Math.max(this.lastPeakG, this.betweenPeakG, this.turnPeakG) >= TURN.wingoverG && this.turnPeakDps <= TURN.maxDps;
+  }
+  finish(t) {
+    const done = { kind: this.kind, nMax: this.nMax, bank: bankOfLoad(this.nMax), t0: this.startT, t1: t, reversals: this.reversals };
+    this.active = false; this.kind = null; this.reversals = 0; this.highS = 0; this.calmS = 0;
+    return done;
+  }
+  /* one tick: the smoothed load [g], rotation rate [°/s] and signed turn rate [°/s], dt in seconds; returns a
+   * finished manoeuvre or null */
+  update(t, loadG, rateDps, dt, turnDps = 0) {
     if (!this.started) { this.n = loadG; this.started = true; } else this.n += dt / (MAN_SMOOTH_S + dt) * (loadG - this.n);
     const n = this.n;
+    this.flightS += dt;
     if (n > this.gMaxFlight) this.gMaxFlight = n;
-    this.sinceLowS = n <= MAN.lowG ? 0 : this.sinceLowS + dt;
     this.highS = n >= MAN.spiralG && rateDps >= MAN.spiralDps ? this.highS + dt : 0;
+    this.turnStarted = false;
+    const reversal = this.trackTurns(n, turnDps, dt);
     if (!this.active) {
-      if (n >= MAN.highG && this.sinceLowS <= MAN.lowWindowS) { this.active = true; this.kind = "wingover"; this.nMax = n; this.startT = t; }
-      else if (this.highS >= MAN.spiralS) { this.active = true; this.kind = "spiral"; this.nMax = n; this.startT = t - MAN.spiralS; }
+      if (reversal) {
+        this.active = true; this.kind = "wingover"; this.reversals = 1; this.startT = t;
+        this.nMax = Math.max(n, this.lastPeakG, this.betweenPeakG, this.turnPeakG);
+        this.peakBeforeTurn = Math.max(this.lastPeakG, this.betweenPeakG);
+        this.turnEarlyPeak = Math.max(n, this.turnPeakG);
+      } else if (this.highS >= MAN.spiralS) { this.active = true; this.kind = "spiral"; this.nMax = n; this.startT = t - MAN.spiralS; }
       return null;
     }
-    if (n > this.nMax) this.nMax = n;
-    if (this.kind === "wingover" && this.highS >= MAN.spiralS) this.kind = "spiral"; /* the wingover went on into a spiral */
-    if (n < MAN.endG) {
-      this.calmS += dt;
-      if (this.calmS >= MAN.endS) {
-        const done = { kind: this.kind, nMax: this.nMax, bank: bankOfLoad(this.nMax), t0: this.startT, t1: t - MAN.endS };
-        this.active = false; this.kind = null; this.highS = 0; this.calmS = 0;
+    if (this.kind === "wingover") {
+      if (reversal) this.reversals++;
+      if (this.turnStarted) { this.peakBeforeTurn = this.nMax; this.turnEarlyPeak = n; }
+      else if (this.turnSign !== 0 && this.turnS <= TURN.earlyS && n > this.turnEarlyPeak) this.turnEarlyPeak = n;
+      if (this.turnSign !== 0 && this.turnS > TURN.maxS) {
+        this.nMax = Math.max(this.peakBeforeTurn, this.turnEarlyPeak); /* the swings' load, not the spiral's */
+        const highS = this.highS; /* a spiral that follows keeps its time at spiral load and rate */
+        const done = this.finish(t);
+        done.intoTurn = true; /* logged, not announced: the spiral is */
+        this.highS = highS;
         return done;
       }
+    }
+    if (n > this.nMax) this.nMax = n;
+    if (n < MAN.endG) {
+      this.calmS += dt;
+      if (this.calmS >= MAN.endS) return this.finish(t - MAN.endS);
     } else this.calmS = 0;
     return null;
   }
@@ -555,7 +612,7 @@ export function detectFlightStates(series, cfg = DEFAULT_CONFIG, opts = {}) {
         if (i1 !== i) continue;
         const i0 = Math.max(0, Math.floor(done.t0 - series.t[0]));
         for (let k = i0; k <= i1 && k < n; k++) maneuverSeconds[k] = kindIndex[done.kind];
-        say(i1, done.kind, `${done.kind} ${done.nMax.toFixed(1)} g, bank ${done.bank.toFixed(0)}°`);
+        say(i1, done.kind, `${done.kind} ${done.nMax.toFixed(1)} g, bank ${done.bank.toFixed(0)}°${done.intoTurn ? " (into the turn, not spoken)" : ""}`);
       }
     } else {
       const done = man.update(i, load, Number.isFinite(turn) ? turn : 0, vz, measured);

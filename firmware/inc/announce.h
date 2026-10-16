@@ -87,6 +87,8 @@ typedef struct {
   uint16_t glide_straight_s;      /* announce_glide_straighttime_int */
   uint16_t glide_min_gain_m;      /* announce_glidemingain_int, 0 = also without a climb before */
   uint16_t glide_repeat_min;      /* announce_glide_repeat_int, 0 = once per glide */
+  uint16_t min_gap_s;             /* announce_mingap_int: automatic announcements at least this far apart, measured
+                                     from the end of the last one (a double tap's too); 0 = no limit */
   /* the stock keys, for the derived lists */
   bool auto_item[MATRIX_ITEMS];   /* voiceauto_<item>_bool */
   bool tap_item[MATRIX_ITEMS];    /* voicetap_<item>_bool */
@@ -164,9 +166,12 @@ typedef struct {
 #define ANN_DUE_ELEVATION 2U
 
 void announce_auto_start(announce_auto_t *a, uint32_t now_s, float alt_m);
-/* Once per second in flight; ANN_DUE_* bits of the triggers that fire (they restart then). */
+/* Once per second in flight; ANN_DUE_* bits of the triggers that fire (they restart then). With hold (the
+ * minimum gap after the last announcement is not over) nothing fires: a due trigger fires once it is. */
 unsigned announce_auto_due(announce_auto_t *a, const announce_config_t *c, uint32_t now_s, float alt_m, bool fix,
-                           int32_t lat_e7, int32_t lon_e7);
+                           int32_t lat_e7, int32_t lon_e7, bool hold);
+/* A double tap told the pilot everything: the time/distance and the elevation triggers start over. */
+void announce_auto_restart(announce_auto_t *a, uint32_t now_s, float alt_m);
 
 /* Summer time rules of the time zones (system_dstrule_string, 0.33). */
 typedef enum {

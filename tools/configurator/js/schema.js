@@ -435,9 +435,11 @@ const TRIGGERS = [
     pool: ["wind", "speed", "heading", "altitude", "tone"],
     legacy: { kind: "event", item: "wind", def: false, items: ["wind"] } },
   { id: "wingover", label: "Wingover and spiral", when: "after a wingover or a spiral dive",
-    help: "A wingover: the load drops at the top (below 0.5 g) and rises to 2 g within 4 s. A spiral: at " +
-      "least 1.6 g while turning 50°/s or more for 4 s. Spoken 2 s after the load is back below 1.3 g. The " +
-      "bank angle is that of a coordinated turn at the peak load.",
+    help: "A wingover: turns that change direction - at least half a second faster than 40°/s one way, then " +
+      "within 2.5 s the other way, with 1.8 g or more in the swings (a series of swings is one wingover). " +
+      "Swings that run straight into a spiral are not spoken; the spiral is. A spiral: at least 1.6 g while " +
+      "turning 50°/s or more for 4 s. Spoken 2 s after the load is back below 1.3 g. The bank angle is that " +
+      "of a coordinated turn at the peak load.",
     enable: { key: "announce_wingover_enable_bool", ext: true, def: "true" },
     settings: [],
     pool: ["maxg", "bank", "tone", "altitude", "duration", "time"],

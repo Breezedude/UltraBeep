@@ -874,11 +874,11 @@ static void flight_sim_init(flight_sim_t *s)
   s->alt = 1500.0f;
 }
 
-static maneuver_kind_t man_run(maneuver_t *m, float load_g, float rate_dps, float seconds)
+static maneuver_kind_t man_turn(maneuver_t *m, float load_g, float turn_dps, float seconds)
 {
   maneuver_kind_t k = MANEUVER_NONE;
   for (int i = 0; i < (int)(seconds / 0.05f + 0.5f); i++) {
-    maneuver_kind_t r = maneuver_update(m, load_g, rate_dps, 0.05f);
+    maneuver_kind_t r = maneuver_update(m, load_g, fabsf(turn_dps), turn_dps, 0.05f);
     if (r != MANEUVER_NONE) {
       k = r;
     }
@@ -890,33 +890,59 @@ static void test_maneuver(void)
 {
   maneuver_t m;
   maneuver_init(&m);
+  man_turn(&m, 1.0f, 0.0f, 40.0f); /* past the settling time after the takeoff */
   /* a steep thermal turn: 1.4 g at 25 deg/s for a minute is no manoeuvre */
-  CHECK(man_run(&m, 1.4f, 25.0f, 60.0f) == MANEUVER_NONE && !m.active, "thermal turn: manoeuvre");
-  /* wingover: unloaded at the top (0.3 g for 1 s), 2.5 g for 1.5 s, then level */
-  man_run(&m, 1.0f, 10.0f, 5.0f);
-  man_run(&m, 0.3f, 30.0f, 1.0f);
-  CHECK(man_run(&m, 2.5f, 60.0f, 1.5f) == MANEUVER_NONE && m.active && m.kind == MANEUVER_WINGOVER, "wingover: start");
-  maneuver_kind_t k = man_run(&m, 1.0f, 10.0f, 3.0f);
-  CHECK(k == MANEUVER_WINGOVER && m.done_n_max > 2.4f && m.done_n_max <= 2.5f && m.done_bank_deg > 65.0f &&
-            m.done_bank_deg < 67.0f,
-        "wingover: %s, %d/100 g, bank %d", maneuver_kind_name(k), (int)(m.done_n_max * 100.0f), (int)m.done_bank_deg);
+  CHECK(man_turn(&m, 1.4f, 25.0f, 60.0f) == MANEUVER_NONE && !m.active, "thermal turn: manoeuvre");
+  /* thermal circles that change direction at 1.5 g: no wingover (the load stays below 1.8 g) */
+  man_turn(&m, 1.5f, -45.0f, 4.0f);
+  man_turn(&m, 1.1f, 0.0f, 1.0f);
+  CHECK(man_turn(&m, 1.5f, 45.0f, 4.0f) == MANEUVER_NONE && !m.active, "change of direction at 1.5 g");
+  /* wingover as flown on 2026-10-16: left 1.5 s at 1.6 g, reversal 1.5 s at 1.0 g, right 2 s at 2.5 g */
+  man_turn(&m, 1.0f, 0.0f, 10.0f);
+  man_turn(&m, 1.6f, -80.0f, 1.5f);
+  man_turn(&m, 1.0f, 10.0f, 1.5f);
+  CHECK(man_turn(&m, 2.5f, 110.0f, 2.0f) == MANEUVER_NONE && m.active && m.kind == MANEUVER_WINGOVER, "wingover: start");
+  /* and back left once more: the same wingover, two swings */
+  man_turn(&m, 1.1f, -10.0f, 1.0f);
+  man_turn(&m, 2.2f, -100.0f, 2.0f);
+  maneuver_kind_t k = man_turn(&m, 1.0f, 0.0f, 3.0f);
+  CHECK(k == MANEUVER_WINGOVER && m.done_reversals == 2 && m.done_n_max > 2.4f && m.done_n_max <= 2.5f &&
+            m.done_bank_deg > 65.0f && m.done_bank_deg < 67.0f,
+        "wingover: %s, %u swings, %d/100 g, bank %d", maneuver_kind_name(k), m.done_reversals,
+        (int)(m.done_n_max * 100.0f), (int)m.done_bank_deg);
   /* spiral: 2.0 g at 90 deg/s for 10 s, then level */
-  man_run(&m, 1.0f, 10.0f, 5.0f);
-  man_run(&m, 2.0f, 90.0f, 10.0f);
-  k = man_run(&m, 1.0f, 10.0f, 3.0f);
+  man_turn(&m, 1.0f, 0.0f, 10.0f);
+  man_turn(&m, 2.0f, 90.0f, 10.0f);
+  k = man_turn(&m, 1.0f, 0.0f, 3.0f);
   CHECK(k == MANEUVER_SPIRAL && m.done_n_max > 1.95f && m.done_bank_deg > 59.0f && m.done_bank_deg < 61.0f,
         "spiral: %s, bank %d", maneuver_kind_name(k), (int)m.done_bank_deg);
-  /* a wingover that goes on turning at 2.2 g becomes a spiral */
-  man_run(&m, 1.0f, 10.0f, 5.0f);
-  man_run(&m, 0.3f, 30.0f, 1.0f);
-  man_run(&m, 2.2f, 80.0f, 6.0f);
-  CHECK(man_run(&m, 1.0f, 10.0f, 3.0f) == MANEUVER_SPIRAL, "wingover into a spiral");
-  /* a 2.3 g pull without an unloaded moment before it (collapse recovery) is not a wingover */
-  man_run(&m, 1.0f, 10.0f, 5.0f);
-  man_run(&m, 2.3f, 20.0f, 1.0f);
-  CHECK(man_run(&m, 1.0f, 10.0f, 3.0f) == MANEUVER_NONE && !m.active, "pull-up without unloading");
-  CHECK(m.g_max_flight > 2.4f && m.g_max_flight <= 2.5f, "flight peak load %d/100 g", (int)(m.g_max_flight * 100.0f));
+  /* swings into a spiral: the wingover is reported when the turn goes on, then the spiral */
+  man_turn(&m, 1.0f, 0.0f, 10.0f);
+  man_turn(&m, 1.7f, -70.0f, 1.5f);
+  man_turn(&m, 1.0f, 5.0f, 1.0f);
+  k = man_turn(&m, 2.6f, 110.0f, 6.0f);
+  CHECK(k == MANEUVER_WINGOVER && m.done_into_turn && m.done_n_max > 2.5f && m.done_n_max < 2.65f && m.active &&
+            m.kind == MANEUVER_SPIRAL,
+        "swings into a spiral: wingover (%d/100 g, not the spiral's load), spiral running", (int)(m.done_n_max * 100.0f));
+  CHECK(man_turn(&m, 1.0f, 0.0f, 3.0f) == MANEUVER_SPIRAL, "swings into a spiral: spiral");
+  /* a 2.3 g pull without turning (collapse recovery) is no wingover */
+  man_turn(&m, 1.0f, 0.0f, 10.0f);
+  man_turn(&m, 0.3f, 0.0f, 1.0f);
+  man_turn(&m, 2.3f, 20.0f, 1.0f);
+  CHECK(man_turn(&m, 1.0f, 0.0f, 3.0f) == MANEUVER_NONE && !m.active, "pull-up without turns");
+  /* knocks and handling: fast short swings beyond 200 deg/s */
+  for (int i = 0; i < 6; i++) {
+    man_turn(&m, 2.0f, i % 2 ? 300.0f : -300.0f, 0.6f);
+  }
+  CHECK(man_turn(&m, 1.0f, 0.0f, 3.0f) == MANEUVER_NONE && !m.active, "knocks: no wingover");
+  CHECK(m.g_max_flight > 2.5f && m.g_max_flight <= 2.6f, "flight peak load %d/100 g", (int)(m.g_max_flight * 100.0f));
   CHECK(maneuver_bank_deg(1.0f) == 0.0f && maneuver_bank_deg(0.5f) == 0.0f, "bank below 1 g");
+  /* right after the takeoff (the launch): no wingover */
+  maneuver_init(&m);
+  man_turn(&m, 1.6f, -80.0f, 1.5f);
+  man_turn(&m, 1.0f, 10.0f, 1.0f);
+  man_turn(&m, 2.5f, 110.0f, 2.0f);
+  CHECK(man_turn(&m, 1.0f, 0.0f, 3.0f) == MANEUVER_NONE, "no wingover in the first 30 s");
 }
 
 static void test_flight_thresholds(void)
@@ -1976,20 +2002,31 @@ static void test_announce(void)
   announce_auto_t t;
   int32_t lat = 470000000, lon = 110000000;
   announce_auto_start(&t, 1000U, 1500.0f);
-  CHECK(announce_auto_due(&t, &c, 1020U, 1650.0f, true, lat, lon) == 0, "altitude change within 30 s");
-  CHECK(announce_auto_due(&t, &c, 1031U, 1650.0f, true, lat, lon) == ANN_DUE_ELEVATION, "150 m gained");
-  CHECK(announce_auto_due(&t, &c, 1100U, 1700.0f, true, lat, lon) == 0, "50 m since the last one");
+  CHECK(announce_auto_due(&t, &c, 1020U, 1650.0f, true, lat, lon, false) == 0, "altitude change within 30 s");
+  CHECK(announce_auto_due(&t, &c, 1031U, 1650.0f, true, lat, lon, false) == ANN_DUE_ELEVATION, "150 m gained");
+  CHECK(announce_auto_due(&t, &c, 1100U, 1700.0f, true, lat, lon, false) == 0, "50 m since the last one");
   unsigned due = 0;
   uint32_t s2 = 1101U;
   for (; s2 < 1200U && !due; s2++) {
     lat += 1000; /* 0.0001 deg north = 11.1 m per second */
-    due = announce_auto_due(&t, &c, s2, 1700.0f, true, lat, lon);
+    due = announce_auto_due(&t, &c, s2, 1700.0f, true, lat, lon, false);
   }
   CHECK(due == ANN_DUE_AUTO && s2 - 1U >= 1185U && s2 - 1U <= 1195U, "1000 m flown after %lu s", (unsigned long)(s2 - 1U));
-  CHECK(announce_auto_due(&t, &c, s2 + 15U * 60U, 1700.0f, false, lat, lon) == ANN_DUE_AUTO, "15 min without a fix");
-  CHECK(announce_auto_due(&t, &c, s2 + 15U * 60U + 1U, 1595.0f, false, lat, lon) == ANN_DUE_ELEVATION, "55 m lost");
+  CHECK(announce_auto_due(&t, &c, s2 + 15U * 60U, 1700.0f, false, lat, lon, false) == ANN_DUE_AUTO, "15 min without a fix");
+  CHECK(announce_auto_due(&t, &c, s2 + 15U * 60U + 1U, 1595.0f, false, lat, lon, false) == ANN_DUE_ELEVATION, "55 m lost");
   c.enable[TRIG_AUTO] = false;
-  CHECK(announce_auto_due(&t, &c, s2 + 40U * 60U, 1595.0f, false, lat, lon) == 0, "time/distance switched off");
+  CHECK(announce_auto_due(&t, &c, s2 + 40U * 60U, 1595.0f, false, lat, lon, false) == 0, "time/distance switched off");
+  /* the global gap holds a due trigger until it is over; a double tap restarts them */
+  c.enable[TRIG_AUTO] = true;
+  c.time_trigger_min = 1;
+  c.dist_trigger_m = 0;
+  announce_auto_start(&t, 5000U, 1000.0f);
+  CHECK(announce_auto_due(&t, &c, 5061U, 1000.0f, true, lat, lon, true) == 0, "held while within the gap");
+  CHECK(announce_auto_due(&t, &c, 5070U, 1000.0f, true, lat, lon, false) == ANN_DUE_AUTO, "fires once the gap is over");
+  announce_auto_restart(&t, 5100U, 1000.0f);
+  CHECK(announce_auto_due(&t, &c, 5130U, 1000.0f, true, lat, lon, false) == 0 &&
+            announce_auto_due(&t, &c, 5161U, 1000.0f, true, lat, lon, false) == ANN_DUE_AUTO,
+        "a double tap restarts the minute");
 }
 
 /* ---- thermal detector ---- */

@@ -774,11 +774,22 @@ function triggerCard(n, trig) {
   return card;
 }
 
+/* The pause between automatic announcements (firmware 0.54), per profile. */
+const ANNOUNCE_GAP_FIELD = { key: "announce_mingap_int", label: "Pause between announcements", type: "select", def: "15",
+  options: [["0", "none"], ["10", "10 s"], ["15", "15 s"], ["20", "20 s"], ["30", "30 s"], ["45", "45 s"], ["60", "1 min"],
+    ["90", "90 s"], ["120", "2 min"]],
+  help: "Automatic announcements keep at least this pause after the last one ended, a double tap's included. " +
+    "A time, distance or altitude announcement that falls due meanwhile comes right after the pause; a thermal, " +
+    "wind, glide or manoeuvre announcement within it is left out. A double tap also restarts the time, distance " +
+    "and altitude triggers, so none of them follows right after it." };
+
 function announceSection(n) {
+  const k = ANNOUNCE_GAP_FIELD.key;
   return fieldset({ title: "Announcements", help: "Each trigger speaks its own list of blocks, in the order " +
       "shown. Add blocks from the pool of a trigger, drag the handle to reorder, and set per block whether it " +
       "stays silent while a phone is connected (the flight app shows the value then). Blocks without data " +
       "(no fix, no wind estimate yet) are left out." },
+  row(ANNOUNCE_GAP_FIELD, getP(n, k, true) ?? ANNOUNCE_GAP_FIELD.def, (v) => setP(n, k, v, true)),
   TRIGGERS.map((t) => triggerCard(n, t)));
 }
 

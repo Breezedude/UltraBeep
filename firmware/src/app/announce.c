@@ -59,6 +59,7 @@ void announce_config_defaults(announce_config_t *c)
   c->thermalexit_min_s = 60;
   c->thermalexit_min_gain_m = 50;
   c->climb_report_s = 20;
+  c->min_gap_s = 15;
   c->glide_straight_s = 30;
   c->glide_min_gain_m = 100;
   c->glide_repeat_min = 0;
@@ -464,8 +465,16 @@ static float distance_m(int32_t lat1, int32_t lon1, int32_t lat2, int32_t lon2)
   return 6371000.0f * sqrtf(dlat * dlat + dlon * dlon);
 }
 
+void announce_auto_restart(announce_auto_t *a, uint32_t now_s, float alt_m)
+{
+  a->dist_m = 0.0f;
+  a->last_s = now_s;
+  a->alt_ref = alt_m;
+  a->elev_s = now_s;
+}
+
 unsigned announce_auto_due(announce_auto_t *a, const announce_config_t *c, uint32_t now_s, float alt_m, bool fix,
-                           int32_t lat_e7, int32_t lon_e7)
+                           int32_t lat_e7, int32_t lon_e7, bool hold)
 {
   unsigned due = 0;
   if (fix) {
@@ -475,6 +484,9 @@ unsigned announce_auto_due(announce_auto_t *a, const announce_config_t *c, uint3
     a->lat_e7 = lat_e7;
     a->lon_e7 = lon_e7;
     a->have_pos = true;
+  }
+  if (hold) {
+    return 0; /* the distance goes on adding up; the triggers fire after the gap */
   }
   if (c->enable[TRIG_AUTO] && now_s - a->last_s >= AUTO_MIN_GAP_S &&
       ((c->dist_trigger_m && a->dist_m >= (float)c->dist_trigger_m) ||

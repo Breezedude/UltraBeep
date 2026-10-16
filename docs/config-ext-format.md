@@ -202,7 +202,7 @@ keys stay where they are (profiles 1–3 in `config.ultrabip`), so BipLink chang
 | `thermaling` | every `announce_thermalclimb_int` s (20) while circling with a mean climb (turns without climb stay silent) | `announce_thermaling_enable_bool` (false) | the key |
 | `glide` | after `announce_glide_straighttime_int` s (30) of straight flight; with `announce_glidemingain_int` m (100, 0 = always) only on the glide after a thermal of that gain; `announce_glide_repeat_int` min (0 = once per glide) | `announce_glide_enable_bool` (true) | the three keys |
 | `wind` | circling ends with a wind estimate that is new or changed by 5 km/h or 45° | `announce_wind_enable_bool` (false) | – |
-| `wingover` | after a wingover (load below 0.5 g at the top, then 2 g within 4 s) or a spiral (1.6 g and 50°/s for 4 s), 2 s after the load is back below 1.3 g (firmware/inc/maneuver.h) | `announce_wingover_enable_bool` (true) | – |
+| `wingover` | after a wingover (turns that change direction: at least 0.5 s faster than 40°/s, the other way within 2.5 s, 1.8 g or more in the swings; swings that run into a spiral are logged, not spoken) or a spiral (1.6 g and 50°/s for 4 s), 2 s after the load is back below 1.3 g (firmware/inc/maneuver.h, 0.54) | `announce_wingover_enable_bool` (true) | – |
 
 Blocks: `altitude`, `climbrate` (10 s mean), `speed`, `heading`, `duration` (flight time), `time`
 (local time of day), `wind`, `glide` (glide ratio), `battery`, `tone` (the falling three-tone
@@ -271,5 +271,6 @@ Further per-profile keys in `config_ext.ultrabip`:
 
 | Key | Default | Meaning |
 |---|---|---|
+| `announce_mingap_int` | 15 | Pause in seconds that automatic announcements keep after the last one ended, a double tap's included (0 = none). A time, distance or elevation announcement that falls due meanwhile comes right after; a thermal, wind, glide or manoeuvre announcement within it is left out. A double tap also restarts the time/distance and elevation triggers (0.54). |
 | `announce_thermalclimb_int` | 20 | Seconds between climb announcements while circling |
 | `announce_glidemingain_int` | 100 | Glide ratio only after a climb of at least this many metres |

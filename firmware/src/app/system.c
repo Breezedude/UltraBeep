@@ -301,12 +301,24 @@ static void announce_input(announce_input_t *in)
   in->bank_series = (ext_words & 16) != 0;
 }
 
+/* An announcement is being spoken; when the last one ended (the global gap, announce_mingap_int). */
+static bool ann_speaking;
+static uint32_t ann_end_tick;
+
 /* Replaces what is still to be spoken. */
 static void announce_queue(const announcement_t *a, uint8_t voice)
 {
   ann_pending = *a;
   ann_next = 0;
   ann_voice = voice;
+  ann_speaking = true;
+}
+
+/* An automatic announcement must wait: one is being spoken, or the last ended less than the gap ago. */
+static bool announce_hold(void)
+{
+  uint32_t gap_ms = (uint32_t)ann_config()->min_gap_s * 1000U;
+  return ann_speaking || (ann_end_tick && HAL_GetTick() - ann_end_tick < gap_ms);
 }
 
 /* Adds to what is still to be spoken (events do not cut off an announcement). */
@@ -322,12 +334,20 @@ static void announce_append(const announcement_t *a, uint8_t voice)
     memcpy(ann_pending.clip[d], a->clip[g], sizeof(ann_pending.clip[d]));
   }
   ann_voice = voice;
+  ann_speaking = true;
 }
 
 /* Every system tick: the next group once the sound task is free; a group without clips is the signal tone. */
 static void announce_drain(void)
 {
-  if (ann_next >= ann_pending.groups || sound_busy()) {
+  if (ann_next >= ann_pending.groups) {
+    if (ann_speaking && !sound_busy()) {
+      ann_speaking = false; /* the last group has been spoken: the gap starts */
+      ann_end_tick = HAL_GetTick();
+    }
+    return;
+  }
+  if (sound_busy()) {
     return;
   }
   unsigned n = ann_pending.count[ann_next];
@@ -361,6 +381,10 @@ static void announce_trigger(announce_trigger_t t, const announce_input_t *in, b
   announcement_t a;
   announce_build(&c->list[t], ble.connected && !request, in, &a);
   if (!a.groups) {
+    return;
+  }
+  if (!request && announce_hold()) {
+    rawlog_event("announcement %s skipped: within %u s of the last", announce_trigger_names[t], c->min_gap_s);
     return;
   }
   rawlog_event("announcement %s", announce_trigger_names[t]);
@@ -473,6 +497,11 @@ static void double_tap(void)
     return;
   }
   announce_trigger(TRIG_TAP, &in, true);
+  if (in_flight) {
+    sensors_t s;
+    sensors_get(&s);
+    announce_auto_restart(&ann_auto, HAL_GetTick() / 1000U, s.alt_m); /* no automatic one right after */
+  }
 }
 
 static void set_usb_drive(bool on)
@@ -1404,12 +1433,22 @@ static void update_maneuver(void)
   if (!s.imu_ok) {
     return;
   }
-  maneuver_kind_t k = maneuver_update(&maneuver, s.accel_fast_ms2 / 9.80665f, s.rate_dps, (float)dt_ms / 1000.0f);
+  maneuver_kind_t k = maneuver_update(&maneuver, s.accel_fast_ms2 / 9.80665f, s.rate_dps, s.turn_dps,
+                                      (float)dt_ms / 1000.0f);
   if (k != MANEUVER_NONE) {
     log_printf("Manoeuvre: %s, %.1f g, bank %.0f deg", maneuver_kind_name(k), (double)maneuver.done_n_max,
                (double)maneuver.done_bank_deg);
-    rawlog_event("maneuver %s %.2f %.0f", maneuver_kind_name(k), (double)maneuver.done_n_max,
-                 (double)maneuver.done_bank_deg);
+    if (k == MANEUVER_WINGOVER) {
+      rawlog_event("maneuver %s %.2f %.0f reversals %u%s", maneuver_kind_name(k), (double)maneuver.done_n_max,
+                   (double)maneuver.done_bank_deg, maneuver.done_reversals,
+                   maneuver.done_into_turn ? " into a turn" : "");
+      if (maneuver.done_into_turn) {
+        return; /* swings into a spiral: not spoken in the spiral, the spiral is announced after it */
+      }
+    } else {
+      rawlog_event("maneuver %s %.2f %.0f", maneuver_kind_name(k), (double)maneuver.done_n_max,
+                   (double)maneuver.done_bank_deg);
+    }
     announce_input_t in;
     announce_input(&in);
     in.g_load = maneuver.done_n_max;
@@ -1426,13 +1465,40 @@ static void update_maneuver(void)
  * tones at the flight level and the IGC file; landing: silent again, the
  * file goes on.
  */
+/* The last GNSS time and when it came: a module that restarted itself sends epochs without a time for a
+ * while, and 0 minus a few seconds made the v3's landing time of 2026-10-16 "4294967285". */
+#define UNIX_2024 1704067200U
+static uint32_t time_anchor_unix, time_anchor_tick;
+
+static void note_gnss_time(const gps_fix_t *fx)
+{
+  if (fx->unix_time >= UNIX_2024) {
+    time_anchor_unix = fx->unix_time;
+    time_anchor_tick = fx->rx_ms;
+  }
+}
+
+/* UTC `ago_s` seconds ago: from the last GNSS time, else the RTC once set; 0 when unknown. */
+static uint32_t utc_ago(uint32_t ago_s)
+{
+  uint32_t now = 0;
+  if (time_anchor_unix) {
+    now = time_anchor_unix + (HAL_GetTick() - time_anchor_tick) / 1000U;
+  } else if (rtc_time_valid() && rtc_time_unix() >= UNIX_2024) {
+    now = rtc_time_unix();
+  }
+  return now > ago_s ? now - ago_s : 0U;
+}
+
 static void on_landing(uint32_t utc)
 {
   log_printf("Landing detected (%02lu:%02lu:%02lu UTC)", (unsigned long)(utc / 3600U % 24U),
              (unsigned long)(utc / 60U % 60U), (unsigned long)(utc % 60U));
   rawlog_event("landing %lu", (unsigned long)utc);
   in_flight = false;
-  recorder_landing(utc);
+  if (utc) {
+    recorder_landing(utc); /* the IGC marker; without a known time none */
+  }
   sound_say1("landing", ground_voice());
 }
 
@@ -1454,7 +1520,7 @@ static void flight_without_gnss(void)
   flight_input_t in = {now_s, false, 0, 0, 0.0f, s.alt_std_m, s.vario_ms, false, 0.0f, 0.0f, 0.0f, 0.0f};
   in.motion = sensors_take_motion(&in.acc_max_g, &in.acc_min_g, &in.rate_max_dps);
   if (flight_update(&flight, &in) == FLIGHT_EVENT_LANDING) {
-    on_landing(rtc_time_unix() - (now_s - flight.landing_s));
+    on_landing(utc_ago(now_s - flight.landing_s));
   }
 }
 
@@ -1467,6 +1533,7 @@ static void update_flight(void)
     return;
   }
   flight_fix_seq = fx.seq;
+  note_gnss_time(&fx);
   bool second = nmea_rate_due(&flight_second, &fx, 1U);
   bool record = nmea_rate_due(&record_rate, &fx, config_get()->record_hz);
   if (!second && !record) {
@@ -1505,7 +1572,7 @@ static void update_flight(void)
   }
   manual_takeoff = false;
   if (ev == FLIGHT_EVENT_TAKEOFF) {
-    uint32_t utc = fx.unix_time - (now_s - flight.takeoff_s);
+    uint32_t utc = utc_ago(now_s - flight.takeoff_s);
     log_printf("Takeoff detected (began about %lu s ago, %02lu:%02lu:%02lu UTC)", (unsigned long)(now_s - flight.takeoff_s),
                (unsigned long)(utc / 3600U % 24U), (unsigned long)(utc / 60U % 60U), (unsigned long)(utc % 60U));
     rawlog_event("takeoff %lu", (unsigned long)utc);
@@ -1518,7 +1585,7 @@ static void update_flight(void)
     recorder_takeoff(utc, profile);
     sound_say1("takeoff", system_voice());
   } else if (ev == FLIGHT_EVENT_LANDING) {
-    on_landing(fx.unix_time - (now_s - flight.landing_s));
+    on_landing(utc_ago(now_s - flight.landing_s));
   }
   if (in_flight) {
     summary_update(&stats, s.alt_m, fx.valid ? fx.speed_ms : -1.0f, s.vario_ms);
@@ -1547,7 +1614,7 @@ static void update_flight(void)
   }
   if (in_flight) {
     unsigned due = announce_auto_due(&ann_auto, ann_config(), now_s, s.alt_m, fx.valid && fx.fix_type == 3,
-                                     fx.lat_e7, fx.lon_e7);
+                                     fx.lat_e7, fx.lon_e7, announce_hold());
     if (due) {
       announce_input_t in;
       announce_input(&in);

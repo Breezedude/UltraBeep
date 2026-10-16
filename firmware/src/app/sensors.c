@@ -25,6 +25,8 @@
 #define ACCEL_ALPHA   0.02f  /* 100 Hz, time constant 0.5 s */
 #define FAST_ALPHA    0.1f   /* 100 Hz, time constant 0.1 s (manoeuvre detection) */
 #define YAW_ALPHA   (1.0f / ICM42605_RATE_HZ) /* 1 s mean of the yaw rate for the thermal detector */
+#define DIR_ALPHA   0.02f /* direction of the specific force, 0.5 s mean (the analyzer's yawRate) */
+#define TURN_ALPHA  0.02f /* 0.5 s mean of the signed turn rate */
 #define G             9.80665f
 #define RETRY_MS      2000U  /* a sensor that did not answer is tried again */
 
@@ -243,10 +245,21 @@ static void sample_imu(void)
 
   float m = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
   float rate = sqrtf(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]) * 57.29578f;
+  /* the turn's direction: the rotation about the (slowly followed) direction of the specific force, which
+   * points up through the pilot in a coordinated turn; clockwise seen from above is positive */
+  static float adir[3] = {0.0f, 0.0f, 1.0f};
+  if (m > 0.0f) {
+    for (int k = 0; k < 3; k++) {
+      adir[k] += DIR_ALPHA * (a[k] / m - adir[k]);
+    }
+  }
+  float along = w[0] * adir[0] + w[1] * adir[1] + w[2] * adir[2];
+  float turn = along < 0.0f ? rate : -rate;
   taskENTER_CRITICAL();
   data.accel_ms2 = data.accel_ms2 == 0.0f ? m : data.accel_ms2 + ACCEL_ALPHA * (m - data.accel_ms2);
   data.accel_fast_ms2 = data.accel_fast_ms2 == 0.0f ? m : data.accel_fast_ms2 + FAST_ALPHA * (m - data.accel_fast_ms2);
   data.rate_dps += FAST_ALPHA * (rate - data.rate_dps);
+  data.turn_dps += TURN_ALPHA * (turn - data.turn_dps);
   data.yaw_dps += YAW_ALPHA * (yaw - data.yaw_dps);
   data.yaw_ok = fusion.attitude_ok;
   float mg = m / G;

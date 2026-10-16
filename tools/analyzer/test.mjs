@@ -250,13 +250,15 @@ const rmsOver = (vz, t0, t1, want) => {
   check(Math.abs(f2.diag.bias[Math.round(79 * 32)] - f2.diag.bias[Math.round(19 * 32)]) < 0.1, "bias state unchanged by the spiral");
 }
 {
-  // a wingover as maneuver.c sees it at 50 ms: unloaded to 0.4 g for half a second, 2.2 g a second later;
-  // the per-second detector sees only 1 s means and never the unloaded moment
+  // a wingover as maneuver.c 0.54 sees it at 50 ms: a left turn at 1.6 g, the reversal, a right turn at 2.2 g
+  // (40 s after the takeoff); the per-second detector sees only 1 s means and never the reversal
   const fine = new FineManeuverDetector(), coarse = new ManeuverDetector();
-  const loadAt = (t) => (t >= 2 && t < 2.5 ? 0.4 : t >= 3.5 && t < 4.5 ? 2.2 : 1);
+  const loadAt = (t) => (t >= 2 && t < 3.5 ? 1.6 : t >= 4.5 && t < 6 ? 2.2 : 1);
+  const turnAt = (t) => (t >= 2 && t < 3.5 ? -70 : t >= 4.5 && t < 6 ? 100 : 0);
   let fineDone = null, coarseDone = null;
+  for (let k = 0; k < 800; k++) fine.update(-40 + k * 0.05, 1, 0, 0.05, 0);
   for (let k = 0; k < 200; k++) {
-    const d = fine.update(k * 0.05, loadAt(k * 0.05), 30, 0.05);
+    const d = fine.update(k * 0.05, loadAt(k * 0.05), Math.abs(turnAt(k * 0.05)), 0.05, turnAt(k * 0.05));
     if (d) fineDone = d;
   }
   for (let i = 0; i < 10; i++) {
@@ -265,7 +267,8 @@ const rmsOver = (vz, t0, t1, want) => {
     const d = coarse.update(i, s / 20, 30, -2, true);
     if (d) coarseDone = d;
   }
-  check(fineDone && fineDone.kind === "wingover" && Math.abs(fineDone.nMax - 2.2) < 0.1 && Math.abs(fineDone.t1 - 4.75) < 0.3, // ends 2 s after the smoothed load fell below 1.3 g
+  check(fineDone && fineDone.kind === "wingover" && fineDone.reversals === 1 && Math.abs(fineDone.nMax - 2.2) < 0.1 &&
+    Math.abs(fineDone.t1 - 6.2) < 0.4, // ends 2 s after the smoothed load fell below 1.3 g
     `wingover at the device's rate: ${JSON.stringify(fineDone)}`);
   check(!coarseDone, `the per-second detector misses it (${JSON.stringify(coarseDone)})`);
 }

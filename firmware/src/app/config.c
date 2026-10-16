@@ -207,6 +207,8 @@ static bool announce_key(announce_config_t *a, const char *key, const char *valu
     a->tap_before_takeoff = ini_parse_bool(value);
   } else if (strcmp(key, "voicetap_enablewhensilent_bool") == 0) {
     a->tap_when_silent = ini_parse_bool(value);
+  } else if (strcmp(key, "announce_mingap_int") == 0) {
+    a->min_gap_s = clamp_u16(v, 0, 600);
   } else if (strncmp(key, "flightsummary_", 14) == 0) {
     static const char *const items[4] = {"duration_bool", "altitude_bool", "speed_bool", "climbrate_bool"};
     const char *item = key + 14;

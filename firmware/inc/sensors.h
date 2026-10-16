@@ -30,6 +30,8 @@ typedef struct {
   float accel_ms2;     /* magnitude of the acceleration, smoothed (0.5 s) */
   float accel_fast_ms2; /* ... smoothed over 0.1 s (manoeuvre detection) */
   float rate_dps;      /* magnitude of the rotation rate, smoothed over 0.1 s [deg/s] */
+  float turn_dps;      /* the rotation rate signed by its direction about the specific force (clockwise positive),
+                          0.5 s mean [deg/s]: the manoeuvre detector's turns, independent of the fusion */
   bool yaw_ok;         /* the attitude is known: yaw_dps is usable */
   float yaw_dps;       /* turn rate about the vertical, 1 s mean, clockwise positive [deg/s] */
   uint32_t samples;    /* barometer samples since the start */
