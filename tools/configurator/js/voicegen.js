@@ -160,8 +160,8 @@ function renderVoicepack() {
   const sampleBtn = el("button", { class: "primary", type: "button", disabled: !canGenerate }, "Create a sample");
   const samplePlay = el("button", { type: "button", disabled: true }, "▶ Play the sample");
   const sampleStop = el("button", { type: "button" }, "Stop");
-  /* a home-server clip still in the making: the status says so while fetchTts asks again */
-  const waiting = (target, what) => (s) => { target.textContent = `${what}: the home server is still at it, asking again in ${s} s …`; };
+  /* a Chatterbox clip still in the making: the status says so while fetchTts asks again */
+  const waiting = (target, what) => (s) => { target.textContent = `${what}: the voice server is still at it, asking again in ${s} s …`; };
   sampleBtn.addEventListener("click", async () => {
     if (!picker.voiceSel.value) { setMessage("Choose a voice first.", true); return; }
     sampleBtn.disabled = true;
@@ -310,11 +310,11 @@ function renderVoicepack() {
     const have = countGenerated();
     const ext = voicepackClips(catalogLang).filter((c) => c.stock === false);
     const v = picker.current();
-    const slow = v && (v.provider === "chatterbox" || v.provider === "own") && have < all;
+    const slow = v && v.provider === "chatterbox" && have < all;
     packStatus.textContent = `${have} of ${all} clips of the ${textsName} pack generated in this session ` +
       `(${ext.filter((c) => G.has(c.name)).length} of the ${ext.length} extension clips the original pack lacks).` +
-      (slow ? ` A home-server voice takes about ${v.seconds} s per clip it has not made before - up to ` +
-        `${Math.max(1, Math.round(((all - have) * v.seconds) / 60))} min for the rest; clips it has made already come at once.` : "");
+      (slow ? ` A Chatterbox voice takes about ${v.seconds} s per clip not made before - up to ` +
+        `${Math.max(1, Math.round(((all - have) * v.seconds) / 60))} min for the rest; clips made already come at once.` : "");
     buildBtn.textContent = have === all ? `Build ${pack.id}.ubpack` : `Build ${pack.id}.ubpack (${all - have} missing)`;
   };
   /* Generates a list of clips, two at a time: the whole pack, or the extension clips from the catalogue. */
@@ -335,7 +335,7 @@ function renderVoicepack() {
       while (clips.length && !genCancel) {
         const clip = clips.shift();
         try {
-          /* pack clips may be longer than Bluetooth ones; on the home server they wait behind single clips */
+          /* pack clips may be longer than Bluetooth ones; on the voice server they wait behind single clips */
           G.set(clip.name, await generateClip(textFor(clip.name), settings, 1, 5, { bulk: true }));
         } catch (e) {
           if (e.status === 429) { genCancel = true; failed.push("Rate limit of the service reached: raise RATE_LIMIT in the relay's .env for a whole pack."); }
@@ -421,7 +421,6 @@ function renderVoicepack() {
     if (!canGenerate) { shareStatus.textContent = `No ${packName} texts yet: only whole packs can be shared.`; return; }
     if (have < all) { shareStatus.textContent = `Generate the whole pack first: ${all - have} clips are missing.`; return; }
     if (!v) { shareStatus.textContent = "Choose a voice first."; return; }
-    if (v.provider === "own") { shareStatus.textContent = "A pack in your recording voice can be shared once the voice is a template (Custom speaker)."; return; }
     if (!checkShareName()) { shareStatus.textContent = "Choose a free name of 2 to 40 characters."; return; }
     if (!shareOk.checked) { shareStatus.textContent = "Tick the box to publish the pack for everyone."; return; }
     shareBtn.disabled = true;
@@ -465,9 +464,10 @@ function renderVoicepack() {
   customRow("Start from", el("div", { class: "band" }, startSel, startNote), "The catalogue texts, or a pack someone shared: " +
     "its voice, settings and changed texts come along (Voice lists the shared packs)."),
   customRow("Language", picker.langSel, "The voices of the pack's language and English."),
-  customRow("Voice", picker.voiceSel, "Microsoft Edge's voices answer at once. The home server's (Chatterbox) sound more " +
-    "natural but take a few seconds per clip it has not made before - it makes the pack clips of its voices in advance - " +
-    "and are missing from the list while that server is offline. Your own voice: Voice → Custom speaker."),
+  customRow("Voice", picker.voiceSel, "Breezedude (Chatterbox): the voices people shared as templates. They sound more " +
+    "natural than Microsoft Edge's, but take a few seconds per clip not made before - their pack clips are made in " +
+    "advance - and are missing while Breezedude's voice server is offline. Your own voice appears here once you share " +
+    "it as a template (Voice → Custom speaker)."),
   customRow("Pitch", slider("pitch", -50, 50, "%"), "Higher or lower, in percent; large shifts sound artificial."),
   customRow("Rate", slider("rate", -50, 50, "%"), "Faster or slower speech, the pitch unchanged."),
   customRow("Band-pass", el("div", { class: "band" }, bandBox, lo, el("span", { class: "unit" }, "Hz to"), hi,

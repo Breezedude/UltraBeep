@@ -46,7 +46,7 @@ async function writePackToCard(dir, id, bytes) {
 
 /* a voice no service here speaks: the pack was made with another tool ("google:de-DE-Chirp3-HD") */
 const externalVoice = (voice) => /^[a-z]+:/.test(voice || "") && !homeVoice(voice);
-const providerLabel = (voice) => (homeVoice(voice) ? "home server" : /^google:/.test(voice || "") ? "Google Cloud TTS"
+const providerLabel = (voice) => (homeVoice(voice) ? "Breezedude, Chatterbox" : /^google:/.test(voice || "") ? "Google Cloud TTS"
   : externalVoice(voice) ? "made elsewhere" : "Microsoft Edge");
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 

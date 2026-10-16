@@ -33,7 +33,7 @@ const VOICE_CLIP_KEY = "identity_voiceclip_string";
 const VOICE_CLIP_MAX = 24;
 
 const TTS_DEFAULTS = { locale: "", voice: "", pitch: 0, rate: 0, bandpass: true, lo: 300, hi: 8000, own: "" };
-const TTS_RETRIES = 20; /* a home-server clip still in the making: asked again after the relay's Retry-After */
+const TTS_RETRIES = 20; /* a Chatterbox clip still in the making: asked again after the relay's Retry-After */
 const OWN_VOICE_RE = /^cb:([a-z]{2,3}-[A-Z]{2})-own-([a-z2-7]{26})$/;
 const OWN_MAX_S = 20;   /* of a recording sent for an own voice; the server uses up to 15 s of speech */
 
@@ -95,9 +95,9 @@ async function serviceError(res) {
 
 /*
  * The MP3 of `text` in `voice`; pitch and rate in percent (the relay's prosody, Edge voices only).
- * opts.bulk: a clip of a whole pack (the home server makes single clips first); opts.onWait(seconds)
- * is told when a home-server clip takes longer and is asked for again; opts.meta gets `spoken`, the
- * text as the home server's model got it (numbers spelled out), when the relay tells it.
+ * opts.bulk: a clip of a whole pack (the voice server makes single clips first); opts.onWait(seconds)
+ * is told when a Chatterbox clip takes longer and is asked for again; opts.meta gets `spoken`, the
+ * text as the model got it (numbers spelled out), when the relay tells it.
  */
 async function fetchTts(voice, text, opts = {}) {
   for (let attempt = 0; ; attempt++) {
@@ -141,7 +141,7 @@ function resetVoiceCatalog() {
   voiceCatalog = null;
 }
 
-/* ---- shared voice packs: descriptions in the relay's database, files on the home server ---- */
+/* ---- shared voice packs: descriptions in the relay's database, files on the voice server ---- */
 
 async function serviceJson(path, init) {
   const res = await fetchService(`${TTS_URL}${path}`, init);
@@ -200,7 +200,7 @@ async function sharePack(desc, image, onProgress) {
 const publishVoice = (body) => serviceJson("/v1/voices/public", { method: "POST", headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ ...body, consent: true }) });
 
-/* ---- the own voice (cloned on the home server) ---- */
+/* ---- the own voice (cloned on the voice server) ---- */
 
 const homeVoice = (name) => (name || "").startsWith("cb:");
 const ownVoiceName = (locale, id) => `cb:${locale}-own-${id}`;
@@ -291,10 +291,14 @@ function currentVoicepack() {
 /*
  * Language and voice selects filled from the relay's list, limited to the pack's language and
  * English (the device strings the clips together with the pack's); the choice is saved in
- * `settings`. The home server's voices (and the own voice) come first, in their own group: they
- * sound better, and their pack clips are usually made in advance. Returns {langSel, voiceSel, note,
- * ready, refill, current, own}; onError(message) when the list cannot be loaded.
+ * `settings`. Breezedude's Chatterbox voices - the shared templates - come first, in their own group:
+ * they sound better, and their pack clips are made in advance. A private recording voice is not
+ * offered here: it serves packs once it is shared as a template (Custom speaker), so good voices
+ * reach everyone. Returns {langSel, voiceSel, note, ready, refill, current, own}; onError(message)
+ * when the list cannot be loaded.
  */
+const CHATTERBOX_GROUP = "Breezedude (Chatterbox)";
+
 function voicePicker(settings, pack, onError) {
   const langSel = el("select", { "aria-label": "Language" });
   const voiceSel = el("select", { "aria-label": "Voice" });
@@ -304,36 +308,28 @@ function voicePicker(settings, pack, onError) {
   /* the "multilingual" voices often mispronounce the language's own words: listed last, never the default
    * (they are a fallback for English terms like "Hike and Fly") */
   const multilingual = (v) => /multilingual/i.test(v.name);
-  const ownFits = (locale) => !!ownVoiceId(settings) && own.available && own.languages.includes(ttsLanguage(locale));
   const fillVoices = () => {
     const locale = langSel.value;
     const list = voices.filter((v) => v.locale === locale);
-    const home = list.filter((v) => v.provider === "chatterbox");
+    const shared = list.filter((v) => v.provider === "chatterbox");
     const edge = list.filter((v) => v.provider !== "chatterbox").sort((a, b) => multilingual(a) - multilingual(b));
-    const ownName = ownFits(locale) ? ownVoiceName(locale, ownVoiceId(settings)) : null;
     const groups = [];
-    if (ownName || home.length) {
-      groups.push(el("optgroup", { label: "Home server (Chatterbox)" },
-        ownName ? el("option", { value: ownName }, "Own voice (your recording)") : null,
-        home.map((v) => el("option", { value: v.name }, `${v.friendly || v.name} (${(v.gender || "").toLowerCase()})`))));
+    if (shared.length) {
+      groups.push(el("optgroup", { label: CHATTERBOX_GROUP }, shared.map((v) => el("option", { value: v.name },
+        `${v.friendly || v.name} (${(v.gender || "").toLowerCase()})`))));
     }
     if (edge.length) {
       groups.push(el("optgroup", { label: "Microsoft Edge" }, edge.map((v) => el("option", { value: v.name },
         `${v.friendly || v.name} (${(v.gender || "").toLowerCase()}${multilingual(v) ? ", multilingual" : ""})`))));
     }
     voiceSel.replaceChildren(...groups);
-    /* the saved voice stays; an own voice follows the language */
-    if (ownName && OWN_VOICE_RE.test(settings.voice || "")) voiceSel.value = ownName;
-    else if (list.some((v) => v.name === settings.voice)) voiceSel.value = settings.voice;
+    if (list.some((v) => v.name === settings.voice)) voiceSel.value = settings.voice; /* the saved voice stays */
     settings.locale = locale;
     settings.voice = voiceSel.value;
     saveTtsSettings(settings);
   };
-  /* the selected voice's entry: {name, provider, seconds, ...} (the own voice has provider "own") */
-  const current = () => {
-    if (OWN_VOICE_RE.test(voiceSel.value)) return { name: voiceSel.value, provider: "own", seconds: own.seconds || 4 };
-    return voices.find((v) => v.name === voiceSel.value) || null;
-  };
+  /* the selected voice's entry: {name, provider, seconds, ...} */
+  const current = () => voices.find((v) => v.name === voiceSel.value) || null;
   const ready = fetchVoiceCatalog().then((catalog) => {
     own = catalog.own;
     const list = catalog.voices;
@@ -355,11 +351,11 @@ function voicePicker(settings, pack, onError) {
     const wanted = saved || locales.find((l) => lower(l) === lower(pack.tts)) || locales.find((l) => lower(l).startsWith(language)) || locales[0];
     langSel.value = wanted;
     const native = locales.filter((l) => l.split("-")[0].toLowerCase() === language).length;
-    const home = voices.filter((v) => v.provider === "chatterbox").length;
+    const shared = voices.filter((v) => v.provider === "chatterbox").length;
     note.textContent = (language === "en" ? `${voices.length} English voices in ${locales.length} regions`
       : native ? `${voices.length} voices: ${pack.label.replace(/ \(.*\)$/, "")} and English`
         : `no ${pack.label} voices at the service; English only`) +
-      (home ? `, ${home} of them on the home server` : own.available ? "; the home server is online" : "");
+      (shared ? `, ${shared} of them by Breezedude (Chatterbox)` : "");
     fillVoices();
   }).catch((e) => {
     note.textContent = "";
