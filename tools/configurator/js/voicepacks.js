@@ -10,24 +10,37 @@
  */
 
 const STOCK_PACKS_URL = "https://stodeus.com/de/ultrabip-voicepacks";
-const PACK_DRAFT = "cfg.packDraft";
+const PACK_DRAFTS = "cfg.packDrafts"; /* {voice pack id: draft} */
+const PACK_DRAFT = "cfg.packDraft";   /* before: the draft of one pack only, {id, ...draft} */
 
 /* The pack being made in Custom voicepack, per voice pack id: the shared pack it started from, its
  * changed texts {clip name: spoken text}, the lines spoken in another language than the pack's
- * {clip name: language} ("gps_ok": "en") and the takes chosen for lines {clip name: variant 1..99}. */
-function packDraft(id) {
+ * {clip name: language} ("gps_ok": "en") and the takes chosen for lines {clip name: variant 1..99}.
+ * Kept in this browser for every pack apart; a file keeps them anywhere (voicepackWorkFile). */
+const cleanDraft = (d = {}) => ({ base: d.base || null, baseName: d.baseName || "", overrides: d.overrides || {},
+  languages: d.languages || {}, variants: d.variants || {} });
+
+function allPackDrafts() {
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem(PACK_DRAFTS) || "{}") || {}; } catch (e) { /* none */ }
   try {
-    const d = JSON.parse(localStorage.getItem(PACK_DRAFT) || "{}");
-    if (d.id === id) {
-      return { base: d.base || null, baseName: d.baseName || "", overrides: d.overrides || {}, languages: d.languages || {},
-        variants: d.variants || {} };
-    }
+    const old = JSON.parse(localStorage.getItem(PACK_DRAFT) || "null");
+    if (old && old.id && !all[old.id]) all[old.id] = cleanDraft(old);
   } catch (e) { /* none */ }
-  return { base: null, baseName: "", overrides: {}, languages: {}, variants: {} };
+  return all;
+}
+
+function packDraft(id) {
+  return cleanDraft(allPackDrafts()[id]);
 }
 
 function savePackDraft(id, draft) {
-  try { localStorage.setItem(PACK_DRAFT, JSON.stringify({ id, ...draft })); } catch (e) { /* page only */ }
+  try {
+    const all = allPackDrafts();
+    all[id] = cleanDraft(draft);
+    localStorage.setItem(PACK_DRAFTS, JSON.stringify(all));
+    localStorage.removeItem(PACK_DRAFT);
+  } catch (e) { /* page only */ }
 }
 
 /* Writes a pack to voices/<id>.ubpack on the SD card; the pack there before is kept once as <id>_orig.ubpack. */

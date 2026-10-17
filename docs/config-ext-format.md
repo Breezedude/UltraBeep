@@ -164,7 +164,7 @@ Other values round to the nearest step (30 → 40, 10 → 20).
     configurator's Voice view lists them in their own table and generates and sends them as a group): `ready` and
     `wait_for_takeoff` (the launch readiness below), `press_button_to_confirm` (the pairing request),
     `glide_ratio`, `g_load` and `bank_angle` (the announcement blocks), `thermal_exit`, the load factor
-    series `g/g_0` … `g/g_100` (0.0 to 10.0 g in tenths, one clip each: "2,3 G", since 0.52), the bank
+    series `g/g_0` … `g/g_100` (0.0 to 10.0 g in tenths, one clip each: "2.3 G", since 0.52), the bank
     angle series `bank/bank_0` … `bank/bank_180` (steps of 5 degrees: "60 Grad", since 0.53), and the
     profiles' voice lines (`identity_voiceclip_string`). Everything else the firmware says is in the stock packs.
 

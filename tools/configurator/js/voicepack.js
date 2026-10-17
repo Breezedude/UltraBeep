@@ -11,8 +11,9 @@
  * texts here can be used, but not generated.
  */
 
-/* v with the decimal mark of the language ("1,5" or "1.5") */
-const decimal = (v, mark) => v.toFixed(v % 1 ? 1 : 0).replace(".", mark);
+/* v with a decimal point in every language ("1.5"): the voice server spells it with the language's word
+ * ("eins Komma fünf") and Edge reads it so too, while a comma sounds like a break between two numbers */
+const decimal = (v) => v.toFixed(v % 1 ? 1 : 0);
 
 const VOICEPACK_LANGUAGES = {
   de: {
@@ -24,10 +25,10 @@ const VOICEPACK_LANGUAGES = {
     kmh: (v) => `${v} Kilometer pro Stunde`,
     number: (n) => `${n}`,
     percent: (p) => `${p} Prozent`,
-    ms: (v) => `${decimal(v, ",")} Meter pro Sekunde`,
-    sink: (v) => `minus ${decimal(v, ",")} Meter pro Sekunde`,
+    ms: (v) => `${decimal(v)} Meter pro Sekunde`,
+    sink: (v) => `minus ${decimal(v)} Meter pro Sekunde`,
     cms: (v) => `${v} Zentimeter pro Sekunde`,
-    g: (v) => `${decimal(v, ",")} G`,
+    g: (v) => `${decimal(v)} G`,
     deg: (d) => `${d} Grad`,
     words: {
       "time/duration": "Flugzeit:", "time/time": "Uhrzeit:",
@@ -74,10 +75,10 @@ const VOICEPACK_LANGUAGES = {
     kmh: (v) => `${v} kilometres per hour`,
     number: (n) => `${n}`,
     percent: (p) => `${p} percent`,
-    ms: (v) => `${decimal(v, ".")} metres per second`,
-    sink: (v) => `minus ${decimal(v, ".")} metres per second`,
+    ms: (v) => `${decimal(v)} metres per second`,
+    sink: (v) => `minus ${decimal(v)} metres per second`,
     cms: (v) => `${v} centimetres per second`,
-    g: (v) => `${decimal(v, ".")} G`,
+    g: (v) => `${decimal(v)} G`,
     deg: (d) => `${d} degrees`,
     words: {
       "time/duration": "Flight time:", "time/time": "Time:",
@@ -123,10 +124,10 @@ const VOICEPACK_LANGUAGES = {
     kmh: (v) => (v === 1 ? "1 kilomètre par heure" : `${v} kilomètres par heure`),
     number: (n) => `${n}`,
     percent: (p) => `${p} pour cent`,
-    ms: (v) => `${decimal(v, ",")} mètres par seconde`,
-    sink: (v) => `moins ${decimal(v, ",")} mètres par seconde`,
+    ms: (v) => `${decimal(v)} mètres par seconde`,
+    sink: (v) => `moins ${decimal(v)} mètres par seconde`,
     cms: (v) => `${v} centimètres par seconde`,
-    g: (v) => `${decimal(v, ",")} G`,
+    g: (v) => `${decimal(v)} G`,
     deg: (d) => (d < 2 ? `${d} degré` : `${d} degrés`),
     words: {
       "time/duration": "Temps de vol :", "time/time": "Heure :",
@@ -172,10 +173,10 @@ const VOICEPACK_LANGUAGES = {
     kmh: (v) => (v === 1 ? "1 chilometro all'ora" : `${v} chilometri all'ora`),
     number: (n) => `${n}`,
     percent: (p) => `${p} per cento`,
-    ms: (v) => (v === 1 ? "1 metro al secondo" : `${decimal(v, ",")} metri al secondo`),
-    sink: (v) => (v === 1 ? "meno 1 metro al secondo" : `meno ${decimal(v, ",")} metri al secondo`),
+    ms: (v) => (v === 1 ? "1 metro al secondo" : `${decimal(v)} metri al secondo`),
+    sink: (v) => (v === 1 ? "meno 1 metro al secondo" : `meno ${decimal(v)} metri al secondo`),
     cms: (v) => `${v} centimetri al secondo`,
-    g: (v) => `${decimal(v, ",")} G`,
+    g: (v) => `${decimal(v)} G`,
     deg: (d) => `${d} gradi`,
     words: {
       "time/duration": "Tempo di volo:", "time/time": "Ora:",
@@ -221,10 +222,10 @@ const VOICEPACK_LANGUAGES = {
     kmh: (v) => (v === 1 ? "1 kilómetro por hora" : `${v} kilómetros por hora`),
     number: (n) => `${n}`,
     percent: (p) => `${p} por ciento`,
-    ms: (v) => (v === 1 ? "1 metro por segundo" : `${decimal(v, ",")} metros por segundo`),
-    sink: (v) => (v === 1 ? "menos 1 metro por segundo" : `menos ${decimal(v, ",")} metros por segundo`),
+    ms: (v) => (v === 1 ? "1 metro por segundo" : `${decimal(v)} metros por segundo`),
+    sink: (v) => (v === 1 ? "menos 1 metro por segundo" : `menos ${decimal(v)} metros por segundo`),
     cms: (v) => `${v} centímetros por segundo`,
-    g: (v) => `${decimal(v, ",")} G`,
+    g: (v) => `${decimal(v)} G`,
     deg: (d) => `${d} grados`,
     words: {
       "time/duration": "Tiempo de vuelo:", "time/time": "Hora:",
@@ -270,10 +271,10 @@ const VOICEPACK_LANGUAGES = {
     kmh: (v) => (v === 1 ? "1 quilómetro por hora" : `${v} quilómetros por hora`),
     number: (n) => `${n}`,
     percent: (p) => `${p} por cento`,
-    ms: (v) => (v === 1 ? "1 metro por segundo" : `${decimal(v, ",")} metros por segundo`),
-    sink: (v) => (v === 1 ? "menos 1 metro por segundo" : `menos ${decimal(v, ",")} metros por segundo`),
+    ms: (v) => (v === 1 ? "1 metro por segundo" : `${decimal(v)} metros por segundo`),
+    sink: (v) => (v === 1 ? "menos 1 metro por segundo" : `menos ${decimal(v)} metros por segundo`),
     cms: (v) => `${v} centímetros por segundo`,
-    g: (v) => `${decimal(v, ",")} G`,
+    g: (v) => `${decimal(v)} G`,
     deg: (d) => `${d} graus`,
     words: {
       "time/duration": "Tempo de voo:", "time/time": "Horas:",
@@ -319,10 +320,10 @@ const VOICEPACK_LANGUAGES = {
     kmh: (v) => `${v} kilometer per uur`,
     number: (n) => `${n}`,
     percent: (p) => `${p} procent`,
-    ms: (v) => `${decimal(v, ",")} meter per seconde`,
-    sink: (v) => `min ${decimal(v, ",")} meter per seconde`,
+    ms: (v) => `${decimal(v)} meter per seconde`,
+    sink: (v) => `min ${decimal(v)} meter per seconde`,
     cms: (v) => `${v} centimeter per seconde`,
-    g: (v) => `${decimal(v, ",")} G`,
+    g: (v) => `${decimal(v)} G`,
     deg: (d) => `${d} graden`,
     words: {
       "time/duration": "Vliegtijd:", "time/time": "Tijd:",
@@ -376,7 +377,7 @@ VOICEPACK_LANGUAGES.br = voicepackVariant("pt", "Português (Brasil)", {
 }, { kmh: (v) => (v === 1 ? "1 quilômetro por hora" : `${v} quilômetros por hora`) });
 VOICEPACK_LANGUAGES.us = voicepackVariant("en", "English (US)", {}, {
   metres: (m) => `${m} meters`, kmh: (v) => `${v} kilometers per hour`,
-  ms: (v) => `${decimal(v, ".")} meters per second`, sink: (v) => `minus ${decimal(v, ".")} meters per second`,
+  ms: (v) => `${decimal(v)} meters per second`, sink: (v) => `minus ${decimal(v)} meters per second`,
   cms: (v) => `${v} centimeters per second`,
 });
 
@@ -431,14 +432,22 @@ function voicepackInfo(id) {
  * (973 clips). profile_custom_<n>, the own profile names, are extension clips too but live outside the
  * catalogue (the profile's voice line). So are the clips of the folders in VOICEPACK_EXTENSION_FOLDERS, which
  * the device says instead of single numbers once it has them: g/g_<tenths>, the load factor 0.0 to 10.0 g as
- * one clip each ("2,3 G" instead of "2" "dot" "3"), and bank/bank_<deg>, the bank angle 0 to 180 degrees in
+ * one clip each ("2.3 G" instead of "2" "dot" "3"), and bank/bank_<deg>, the bank angle 0 to 180 degrees in
  * steps of 5 ("60 Grad"; a size without a side). Taken from the load of a coordinated turn the angle stays
- * below 90; a wingover's measured tilt (firmware 0.55) goes beyond.
+ * below 90; a wingover's measured tilt (firmware 0.55) goes beyond. The sink rates the stock packs lack are
+ * extension clips too: from -11 to -20 m/s they have only the half ones (-11.5 ... -19.5), so the whole ones
+ * and everything from -20.5 to -25 m/s (fast spirals) are added (voicepackStockSink).
  */
 const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_to_confirm", "glide_ratio", "g_load",
   "bank_angle", "thermal_exit"]);
 const VOICEPACK_EXTENSION_FOLDERS = ["g", "bank"];
-const voicepackExtension = (name) => VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_FOLDERS.includes(name.split("/")[0]);
+/* the sink clips of the stock packs, in cm/s: 0.1 to 0.5, 1.0 to 10.5 in halves, then -11.5 ... -19.5 */
+const voicepackStockSink = (c) => (c <= 50 && c % 10 === 0) || (c >= 100 && c <= 1050) || (c > 1050 && c <= 1950 && c % 100 === 50);
+const voicepackExtension = (name) => {
+  const sink = /^vario_sink_(\d+)$/.exec(name);
+  if (sink) return !voicepackStockSink(Number(sink[1]));
+  return VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_FOLDERS.includes(name.split("/")[0]);
+};
 
 /*
  * All clips of a language: [{name, text, stock}], name as the firmware asks for it ("al/al_1230", "takeoff");
@@ -463,8 +472,8 @@ function voicepackClips(lang) {
   for (let c = 10; c <= 50; c += 10) add(`vario_lift_${c}`, L.ms(c / 100));
   for (let c = 100; c <= 1000; c += 50) add(`vario_lift_${c}`, L.ms(c / 100));
   for (let c = 10; c <= 50; c += 10) add(`vario_sink_${c}`, L.sink(c / 100));
-  for (let c = 100; c <= 1050; c += 50) add(`vario_sink_${c}`, L.sink(c / 100));
-  for (let c = 1150; c <= 1950; c += 100) add(`vario_sink_${c}`, L.sink(c / 100));
+  /* -1 to -25 m/s in halves; the stock packs stop at -19.5 and lack the whole ones from -11 on */
+  for (let c = 100; c <= 2500; c += 50) add(`vario_sink_${c}`, L.sink(c / 100));
   for (const c of [5, 10, 15, 20, 30, 40, 50]) add(`settings_${c}`, L.cms(c));
   /* the load factor in tenths of a g: the accelerometer measures to 8 g and is good to about 0.1 g */
   for (let t = 0; t <= 100; t++) add(`g/g_${t}`, L.g(t / 10));
@@ -486,7 +495,55 @@ function voicepackSample() {
     "al/al_1230", "sp/sp_42", "vario_lift_150"];
 }
 
+/*
+ * The work on a pack as a file (Custom voicepack "Save to a file"): the pack id, the shared pack it started
+ * from, the changed texts, the lines' languages and variants, the voice and the audio settings. The
+ * generated clips are not in it: the voice server makes them again (at once where it made them before).
+ */
+const VOICEPACK_WORK_FORMAT = "ultrabeep-voicepack-work";
+
+function voicepackWorkFile(packId, draft, settings) {
+  return { format: VOICEPACK_WORK_FORMAT, version: 1, pack: packId, saved: new Date().toISOString(),
+    voice: settings.voice || "", audio: { pitch: settings.pitch | 0, rate: settings.rate | 0, bandpass: !!settings.bandpass,
+      lo: settings.lo | 0, hi: settings.hi | 0 },
+    base: draft.base || null, baseName: draft.baseName || "", overrides: draft.overrides || {}, languages: draft.languages || {},
+    variants: draft.variants || {} };
+}
+
+/* The work from such a file, checked: {pack, draft, voice, audio, dropped (entries for unknown clips or with
+ * bad values, left out)}; throws Error(message) for a file that is none. */
+function voicepackWorkFromFile(text) {
+  let w;
+  try { w = JSON.parse(text); } catch (e) { throw new Error("The file is not JSON."); }
+  if (!w || w.format !== VOICEPACK_WORK_FORMAT) throw new Error("The file is no voice pack work file (saved by Custom voicepack).");
+  const pack = String(w.pack || "").trim().toLowerCase();
+  if (!/^[a-z0-9_]{1,24}$/.test(pack)) throw new Error("The file names no voice pack.");
+  const lang = voicepackInfo(pack).lang || "en";
+  const known = (name) => !!voicepackText(lang, name);
+  let dropped = 0;
+  const take = (obj, ok) => {
+    const out = {};
+    for (const [name, v] of Object.entries(obj && typeof obj === "object" ? obj : {})) {
+      if (known(name) && ok(v)) out[name] = typeof v === "string" ? v.replace(/\s+/g, " ").trim() : v;
+      else dropped++;
+    }
+    return out;
+  };
+  const draft = {
+    base: /^[a-z0-9]{20}$/.test(w.base || "") ? w.base : null, baseName: String(w.baseName || "").slice(0, 40),
+    overrides: take(w.overrides, (t) => typeof t === "string" && t.trim().length > 0 && t.length <= 300),
+    languages: take(w.languages, (l) => typeof l === "string" && /^[a-z]{2}$/.test(l)),
+    variants: take(w.variants, (v) => Number.isInteger(v) && v >= 1 && v <= 99),
+  };
+  const a = w.audio && typeof w.audio === "object" ? w.audio : {};
+  const num = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.max(lo, Math.min(hi, Math.round(Number(v)))) : d);
+  const audio = { pitch: num(a.pitch, -50, 50, 0), rate: num(a.rate, -50, 50, 0), bandpass: a.bandpass !== false,
+    lo: num(a.lo, 20, 2000, 300), hi: num(a.hi, 1000, 11000, 8000) };
+  const voice = typeof w.voice === "string" && w.voice.length <= 80 ? w.voice : "";
+  return { pack, draft, voice, audio, dropped };
+}
+
 if (typeof module !== "undefined") {
-  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension, VOICEPACK_LANGUAGES,
-    VOICEPACKS, VOICEPACK_EXTENSION };
+  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension, voicepackStockSink,
+    voicepackWorkFile, voicepackWorkFromFile, VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION };
 }

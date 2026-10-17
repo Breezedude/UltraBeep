@@ -144,6 +144,41 @@ function renderVoicepack() {
     }
     renderVoicepack();
   });
+  /* the work on the pack as a file: kept anywhere, loaded again in any browser */
+  const changes = (d) => Object.keys(d.overrides).length + Object.keys(d.languages).length + Object.keys(d.variants).length;
+  const workFile = el("input", { type: "file", accept: ".json,application/json", hidden: true });
+  const workNote = el("span", { class: "unit" }, "");
+  const workSave = el("button", { type: "button", disabled: !canGenerate }, "Save to a file");
+  const workLoad = el("button", { type: "button", disabled: !canGenerate }, "Load a file…");
+  workSave.addEventListener("click", () => {
+    const name = `${packId}-voicepack-work.json`;
+    downloadBytes(name, new TextEncoder().encode(JSON.stringify(voicepackWorkFile(packId, draft, settings), null, 2)));
+    workNote.textContent = `saved as ${name}`;
+  });
+  workLoad.addEventListener("click", () => workFile.click());
+  workFile.addEventListener("change", async () => {
+    const file = workFile.files && workFile.files[0];
+    workFile.value = "";
+    if (!file) return;
+    try {
+      const w = voicepackWorkFromFile(await file.text());
+      if (w.pack !== packId && !window.confirm(`The file is for the ${voicepackInfo(w.pack).label} voice pack (${w.pack}). ` +
+        "Switch the device's voice pack to it (System → Language and time)?")) return;
+      if (changes(w.pack === packId ? draft : packDraft(w.pack)) &&
+        !window.confirm("Replace the changed texts, languages and variants made here with those of the file?")) return;
+      savePackDraft(w.pack, w.draft);
+      Object.assign(settings, w.audio, w.voice ? { voice: w.voice, locale: "" } : {});
+      saveTtsSettings(settings);
+      if (w.pack !== packId) setSystemValue("system_language_string", w.pack);
+      renderVoicepack();
+      const n = changes(w.draft);
+      setMessage(`Loaded ${file.name}: ${n} change${n === 1 ? "" : "s"}, the voice and its settings` +
+        (w.dropped ? ` (${w.dropped} entr${w.dropped === 1 ? "y" : "ies"} for unknown clips left out)` : "") +
+        ". The clips are not in the file: generate them again (quick for the ones the voice server made before).");
+    } catch (e) {
+      setMessage(e.message, true);
+    }
+  });
   const packNote = el("p", { class: canGenerate ? "sub" : "warn-text" }, canGenerate
     ? `Clips are generated with the ${textsName} texts of the pack; the voices below speak ` +
       `${pack.language === "en" ? "English" : `${packName} or English`}.`
@@ -532,6 +567,11 @@ function renderVoicepack() {
   customRow("Voice pack", packSel, packField.help), packNote,
   customRow("Start from", el("div", { class: "band" }, startSel, startNote), "The catalogue texts, or a pack someone shared: " +
     "its voice, settings and changed texts come along (Voice lists the shared packs)."),
+  customRow("Your changes", el("div", { class: "band" }, workSave, workLoad, workFile, workNote), "Changed texts, languages " +
+    "and variants are kept in this browser, for every voice pack apart - not in another browser, and gone when the " +
+    "site data is cleared. Save them to a file to keep or move them; loading the file brings them back with the voice " +
+    "and its settings. The generated clips are not in the file: \"Generate all clips\" fetches them again, at once " +
+    "for the clips the voice server made before."),
   customRow("Language", picker.langSel, "The voices of the pack's language and English."),
   customRow("Voice", picker.voiceSel, "Breezedude (Chatterbox): the voices people shared as templates. They sound more " +
     "natural than Microsoft Edge's, but take a few seconds per clip not made before - their pack clips are made in " +
