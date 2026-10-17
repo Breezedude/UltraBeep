@@ -428,26 +428,18 @@ function voicepackInfo(id) {
 
 /*
  * Clips the manufacturer's packs do not have: UltraBeep says them for its own features, so they have to be
- * generated (single files in voices/custom, or a pack built here). Checked against the stock de.ubpack
- * (973 clips). profile_custom_<n>, the own profile names, are extension clips too but live outside the
+ * generated (single files in voices/custom, or a pack built here). Checked against the German packs of 2023
+ * (972 and 983 clips). profile_custom_<n>, the own profile names, are extension clips too but live outside the
  * catalogue (the profile's voice line). So are the clips of the folders in VOICEPACK_EXTENSION_FOLDERS, which
  * the device says instead of single numbers once it has them: g/g_<tenths>, the load factor 0.0 to 10.0 g as
  * one clip each ("2.3 G" instead of "2" "dot" "3"), and bank/bank_<deg>, the bank angle 0 to 180 degrees in
  * steps of 5 ("60 Grad"; a size without a side). Taken from the load of a coordinated turn the angle stays
- * below 90; a wingover's measured tilt (firmware 0.55) goes beyond. The sink rates the stock packs lack are
- * extension clips too: from -11 to -20 m/s they have only the half ones (-11.5 ... -19.5), so the whole ones
- * and everything from -20.5 to -25 m/s (fast spirals) are added (voicepackStockSink).
+ * below 90; a wingover's measured tilt (firmware 0.55) goes beyond.
  */
 const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_to_confirm", "glide_ratio", "g_load",
   "bank_angle", "thermal_exit"]);
 const VOICEPACK_EXTENSION_FOLDERS = ["g", "bank"];
-/* the sink clips of the stock packs, in cm/s: 0.1 to 0.5, 1.0 to 10.5 in halves, then -11.5 ... -19.5 */
-const voicepackStockSink = (c) => (c <= 50 && c % 10 === 0) || (c >= 100 && c <= 1050) || (c > 1050 && c <= 1950 && c % 100 === 50);
-const voicepackExtension = (name) => {
-  const sink = /^vario_sink_(\d+)$/.exec(name);
-  if (sink) return !voicepackStockSink(Number(sink[1]));
-  return VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_FOLDERS.includes(name.split("/")[0]);
-};
+const voicepackExtension = (name) => VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_FOLDERS.includes(name.split("/")[0]);
 
 /*
  * All clips of a language: [{name, text, stock}], name as the firmware asks for it ("al/al_1230", "takeoff");
@@ -465,14 +457,15 @@ function voicepackClips(lang) {
   for (let a = -100; a < 5000; a += 10) add(`al/al_${a}`, L.metres(a));
   for (let a = 5000; a <= 7000; a += 100) add(`al/al_${a}`, L.metres(a));
   for (let v = 0; v < 80; v++) add(`sp/sp_${v}`, L.kmh(v));
-  for (let v = 85; v <= 200; v += 5) add(`sp/sp_${v}`, L.kmh(v));
+  for (let v = 80; v <= 200; v += 5) add(`sp/sp_${v}`, L.kmh(v)); /* 80 was in the pack of 2023-04-21, not in later ones */
   for (let n = 0; n <= 60; n++) add(`${n}`, L.number(n));
   for (let p = 0; p <= 100; p += 25) add(`${p}_percent`, L.percent(p));
   add("vario_lift_0", L.ms(0));
   for (let c = 10; c <= 50; c += 10) add(`vario_lift_${c}`, L.ms(c / 100));
   for (let c = 100; c <= 1000; c += 50) add(`vario_lift_${c}`, L.ms(c / 100));
   for (let c = 10; c <= 50; c += 10) add(`vario_sink_${c}`, L.sink(c / 100));
-  /* -1 to -25 m/s in halves; the stock packs stop at -19.5 and lack the whole ones from -11 on */
+  /* -1 to -25 m/s in halves: up to -20 as in the pack of 2023-04-21 (later ones lost the whole ones from -11),
+   * beyond for fast spirals */
   for (let c = 100; c <= 2500; c += 50) add(`vario_sink_${c}`, L.sink(c / 100));
   for (const c of [5, 10, 15, 20, 30, 40, 50]) add(`settings_${c}`, L.cms(c));
   /* the load factor in tenths of a g: the accelerometer measures to 8 g and is good to about 0.1 g */
@@ -544,6 +537,6 @@ function voicepackWorkFromFile(text) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension, voicepackStockSink,
+  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension,
     voicepackWorkFile, voicepackWorkFromFile, VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION };
 }

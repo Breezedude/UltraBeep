@@ -7,7 +7,7 @@
  *   node tools/configurator/tests/voicepack_test.js
  */
 const path = require("node:path");
-const { voicepackClips, voicepackText, voicepackInfo, voicepackExtension, voicepackStockSink, VOICEPACK_LANGUAGES, VOICEPACKS,
+const { voicepackClips, voicepackText, voicepackInfo, voicepackExtension, VOICEPACK_LANGUAGES, VOICEPACKS,
   VOICEPACK_EXTENSION } = require(path.join(__dirname, "..", "js", "voicepack.js"));
 
 let failed = 0;
@@ -41,18 +41,16 @@ check(voicepackText("pt", "takeoff") === "Descolagem" && voicepackText("br", "ta
 const series = de.filter((c) => c.name.startsWith("g/"));
 const bank = de.filter((c) => c.name.startsWith("bank/"));
 const sink = de.filter((c) => /^vario_sink_\d+$/.test(c.name));
-check(VOICEPACK_EXTENSION.size === 7 && de.filter((c) => !c.stock).length === 7 + 101 + 37 + 20 &&
-  de.filter((c) => c.stock).length === de.length - 165 && [...series, ...bank].every((c) => !c.stock) &&
+check(VOICEPACK_EXTENSION.size === 7 && de.filter((c) => !c.stock).length === 7 + 101 + 37 &&
+  de.filter((c) => c.stock).length === de.length - 145 && [...series, ...bank].every((c) => !c.stock) &&
   voicepackExtension("g/g_23") && voicepackExtension("bank/bank_60") &&
   !voicepackExtension("al/al_1230") && !voicepackExtension("gps_ok") && voicepackExtension("bank_angle") &&
   Object.keys(VOICEPACK_LANGUAGES).every((l) => [...VOICEPACK_EXTENSION].every((n) => voicepackText(l, n))),
-"the 7 extension words, the 101 load factor, the 37 bank angle and the 20 sink clips are flagged and have texts in every language");
-check(sink.length === 54 && sink[sink.length - 1].name === "vario_sink_2500" && sink.filter((c) => c.stock).length === 34 &&
-  ["vario_sink_1100", "vario_sink_1200", "vario_sink_2000", "vario_sink_2050", "vario_sink_2500"].every(voicepackExtension) &&
-  ["vario_sink_1050", "vario_sink_1150", "vario_sink_1950", "vario_sink_50", "vario_sink_off"].every((n) => !voicepackExtension(n)) &&
-  voicepackStockSink(1250) && !voicepackStockSink(1300) && voicepackText("de", "vario_sink_1200") === "minus 12 Meter pro Sekunde" &&
-  voicepackText("en", "vario_sink_2450") === "minus 24.5 metres per second",
-"the sink series: -0.1 to -25 m/s, the whole ones from -11 and all beyond -19.5 as extension clips");
+"the 7 extension words, the 101 load factor and the 37 bank angle clips are flagged and have texts in every language");
+check(sink.length === 54 && sink[sink.length - 1].name === "vario_sink_2500" && sink.every((c) => c.stock) &&
+  de.filter((c) => c.stock).length === 993 && voicepackText("de", "vario_sink_1200") === "minus 12 Meter pro Sekunde" &&
+  voicepackText("en", "vario_sink_2450") === "minus 24.5 metres per second" && voicepackText("de", "sp/sp_80") === "80 Kilometer pro Stunde",
+"the pack's clips: the sinks -0.1 to -25 m/s in halves and 80 km/h with the others (972 + 20 + 1)");
 check(bank.length === 37 && bank[0].name === "bank/bank_0" && bank[18].name === "bank/bank_90" && bank[36].name === "bank/bank_180" &&
   voicepackText("de", "bank/bank_60") === "60 Grad" && voicepackText("us", "bank/bank_45") === "45 degrees" &&
   voicepackText("fr", "bank/bank_0") === "0 degré" && voicepackText("fr", "bank/bank_5") === "5 degrés" &&
