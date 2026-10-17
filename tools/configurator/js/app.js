@@ -369,7 +369,8 @@ function showPop(anchor, text, pinned) {
   if (pop.anchor && pop.anchor !== anchor) pop.anchor.setAttribute("aria-expanded", "false");
   pop.anchor = anchor;
   pop.pinned = pinned;
-  pop.el.textContent = text;
+  if (text instanceof Node) pop.el.replaceChildren(text.cloneNode(true)); /* a help with structure (textTips) */
+  else pop.el.textContent = text;
   pop.el.hidden = false;
   anchor.setAttribute("aria-expanded", "true");
   anchor.setAttribute("aria-describedby", "popover");

@@ -200,9 +200,9 @@ def fat12_image(files):
     return bytes(image)
 
 
-def fake_speak(conds_path, language, text, settings):
+def fake_speak(conds_path, language, text, settings, variant=0):
     extra = json.dumps(settings, sort_keys=True) if settings else ""
-    return f"MP3:{language}:{text}{extra}".encode(), {"ms": 50, "attempts": 1, "spoken": text, "seconds": 1.0}
+    return f"MP3:{language}:{text}{extra}{f'#{variant}' if variant else ''}".encode(), {"ms": 50, "attempts": 1, "spoken": text, "seconds": 1.0}
 
 
 def fake_clone(wav_bytes, out_path):
@@ -269,6 +269,16 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((base64.b64decode(r["data"]), r["spoken"]), (b"MP3:de:GPS ok 2", "GPS ok zwei"))  # cached apart
         r = await self.ask({"type": "speak", "id": "2d", "voice": "cb:de-DE-anna", "text": "Thermik", "language": "xx"})
         self.assertTrue(r["cached"])  # an unknown language is the voice's own
+        # variants: another take of the same text, cached apart; 0 and nonsense are the default take
+        r = await self.ask({"type": "speak", "id": "2e", "voice": "cb:de-DE-anna", "text": "Thermik", "variant": 3})
+        self.assertEqual((base64.b64decode(r["data"]), r["cached"]), (b"MP3:de:Thermik#3", False))
+        r = await self.ask({"type": "speak", "id": "2f", "voice": "cb:de-DE-anna", "text": "Thermik", "variant": 3})
+        self.assertTrue(r["cached"])
+        for i, v in enumerate((0, -1, 100, "2", 2.5, True)):
+            r = await self.ask({"type": "speak", "id": f"2g{i}", "voice": "cb:de-DE-anna", "text": "Thermik", "variant": v})
+            self.assertEqual((base64.b64decode(r["data"]), r["cached"]), (b"MP3:de:Thermik", True))
+        r = await self.ask({"type": "speak", "id": "2h", "voice": "cb:de-DE-anna", "text": "GPS ok 2", "language": "en", "variant": 1})
+        self.assertEqual((base64.b64decode(r["data"]), r["cached"]), (b"MP3:en:GPS ok 2#1", False))
         r = await self.ask({"type": "speak", "id": "3", "voice": "cb:de-DE-nobody", "text": "Thermik"})
         self.assertEqual((r["type"], r["status"]), ("error", 404))
         r = await self.ask({"type": "speak", "id": "4", "voice": "cb:de-DE-anna", "text": " "})

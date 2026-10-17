@@ -156,6 +156,11 @@ button.info:hover, button.info[aria-expanded="true"] { color: var(--accent); bor
 .popover { position: absolute; z-index: 50; background: var(--text); color: var(--panel); font-size: 13.5px; line-height: 1.45;
   padding: 10px 12px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .22); pointer-events: none; }
 @media (prefers-color-scheme: dark) { .popover { background: #e9eef4; color: #121820; } }
+.variant-pick { display: flex; align-items: center; gap: 10px; }
+.variant-pick output { min-width: 8.5em; text-align: center; }
+.popover .tips ul { margin: 4px 0 0; padding-left: 18px; }
+.popover .tips li { margin: 3px 0; }
+.popover .tips q { font-style: italic; }
 
 /* tables */
 table { border-collapse: collapse; width: 100%; }

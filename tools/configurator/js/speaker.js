@@ -313,7 +313,7 @@ function renderSpeaker() {
   customRow("Pace", slider("cfg_weight", 0, 1, 0.05, (v) => v.toFixed(2), regen), "How closely it follows the text's pace; lower is " +
     "slower and more deliberate, 0 also reduces the accent of a recording in another language."),
   customRow("Variation", slider("temperature", 0.05, 2, 0.05, (v) => v.toFixed(2), regen), "Higher is more varied, lower more even."),
-  customRow("Text", textInput, "Numbers are spoken as words; the status below shows the text as the voice server got it."),
+  customRow("Text", textInput, textTips(false)),
   presets,
   customRow("Pitch", slider("pitch", -50, 50, 1, pct), "Higher or lower, in percent; large shifts sound artificial."),
   customRow("Rate", slider("rate", -50, 50, 1, pct), "Faster or slower speech, the pitch unchanged."),

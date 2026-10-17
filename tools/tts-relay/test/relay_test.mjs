@@ -60,7 +60,7 @@ function fakeWorker(secret = SECRET, opts = {}) {
       if (msg.type === "speak") {
         if (msg.voice.endsWith("missing")) send({ type: "error", id: msg.id, status: 404, message: "no such voice" });
         else send({ type: "audio", id: msg.id, mime: "audio/mpeg", ms: 1500, cached: false, spoken: `gesagt: ${msg.text}`,
-          data: Buffer.from(`MP3:${msg.text}${msg.settings ? JSON.stringify(msg.settings) : ""}${msg.language ? `[${msg.language}]` : ""}`).toString("base64") });
+          data: Buffer.from(`MP3:${msg.text}${msg.settings ? JSON.stringify(msg.settings) : ""}${msg.language ? `[${msg.language}]` : ""}${msg.variant ? `#${msg.variant}` : ""}`).toString("base64") });
       } else if (msg.type === "clone") {
         send({ type: "cloned", id: msg.id, voice_id: OWN_ID, seconds: 9.5 });
       } else if (msg.type === "forget") {
@@ -189,6 +189,16 @@ try {
   check(r.ok && (await r.text()) === "MP3:GPS ok[en]", "a line in another language: passed on");
   r = await speak(VOICE, "GPS ok", { language: "English" });
   check(r.ok && (await r.text()) === "MP3:GPS ok", "a malformed language is ignored, and cached apart from the English one");
+  r = await speak(VOICE, "GPS ok", { variant: 2 });
+  check(r.ok && (await r.text()) === "MP3:GPS ok#2", "a variant: passed on, cached apart from the default take");
+  r = await speak(VOICE, "GPS ok", { language: "en", variant: 2 });
+  check(r.ok && (await r.text()) === "MP3:GPS ok[en]#2", "a variant of a line in another language");
+  let plain = true;
+  for (const v of [0, -1, 100, "2", 2.5, true]) {
+    r = await speak(VOICE, "GPS ok", { variant: v });
+    plain = plain && r.ok && (await r.text()) === "MP3:GPS ok";
+  }
+  check(plain, "variant 0 and malformed variants are the default take");
 
   /* a template for everyone */
   const pub = (body) => fetch(`${base}/v1/voices/public`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -204,12 +214,15 @@ try {
   /* a shared pack: announce, upload in parts, list, details, download, operator deletes */
   const file = Buffer.alloc(2.5 * 2 ** 20, 7);
   const packBody = { name: "Mein Pack", lang: "de", voice: VOICE, voice_label: "Test", clips: 979, size: file.length, consent: true,
-    settings: { pitch: 4, rate: -3, bandpass: true, lo: 250, hi: 9000 }, overrides: { "profile_hike": "Haik änd Flai" }, languages: { gps_ok: "en" } };
+    settings: { pitch: 4, rate: -3, bandpass: true, lo: 250, hi: 9000 }, overrides: { "profile_hike": "Haik änd Flai" }, languages: { gps_ok: "en" },
+    variants: { no_gps: 3 } };
   const createPack = (b) => fetch(`${base}/v1/packs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
   r = await createPack({ ...packBody, consent: false });
   check(r.status === 400, "pack without consent: 400");
   r = await createPack({ ...packBody, languages: { gps_ok: "English" } });
   check(r.status === 400, "pack with a malformed language: 400");
+  r = await createPack({ ...packBody, variants: { no_gps: 100 } });
+  check(r.status === 400, "pack with a variant out of range: 400");
   r = await createPack({ ...packBody, voice: `cb:de-DE-own-${OWN_ID}` });
   check(r.status === 400, "pack with an own voice: 400");
   r = await createPack(packBody);
@@ -240,7 +253,8 @@ try {
   check((await r.json()).packs.length === 0, "pack list filtered by language");
   r = await fetch(`${base}/v1/packs/${made.id}`);
   j = await r.json();
-  check(j.overrides.profile_hike === "Haik änd Flai" && j.languages.gps_ok === "en", "pack details with its changed texts and languages");
+  check(j.overrides.profile_hike === "Haik änd Flai" && j.languages.gps_ok === "en" && j.variants.no_gps === 3,
+    "pack details with its changed texts, languages and variants");
   r = await fetch(`${base}/v1/packs/${made.id}/sample?names=takeoff,al/al_1230,missing,../x`);
   j = await r.json();
   check(r.ok && Buffer.from(j.clips.takeoff, "base64").toString() === "QOA:voices/takeoff.qoa" &&

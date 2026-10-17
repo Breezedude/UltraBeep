@@ -119,7 +119,7 @@ JSON text frames on `wss://<relay>/v1/worker`, `Authorization: Bearer <WORKER_SE
 | From | Message |
 |---|---|
 | worker | `{"type": "hello" \| "voices", "name", "slots", "seconds", "languages": [...], "voices": [{name, locale, gender, friendly}]}` |
-| relay | `{"type": "speak", "id", "voice", "text", "settings"?}` → `{"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms"}` |
+| relay | `{"type": "speak", "id", "voice", "text", "settings"?, "language"?, "variant"?}` → `{"type": "audio", "id", "mime": "audio/mpeg", "data": base64, "cached", "ms", "spoken"}`; `variant` 1..99 is another take of the same text: the seed comes from language, text and variant, so each take is reproducible and cached apart |
 | relay | `{"type": "clone", "id", "wav": base64, "consent": true}` → `{"type": "cloned", "id", "voice_id", "seconds"}` |
 | relay | `{"type": "forget", "id", "voice_id"}` → `{"type": "forgot", "id", "deleted"}` |
 | relay | `{"type": "publish", "id", "voice_id", "name", "locale", "gender", "settings", "audio", "consent": true}` → a `voices` update, then `{"type": "published", "id", "voice"}` |

@@ -37,6 +37,7 @@ TOKENS_PER_S = 25
 # Part of every cache key: change it when the audio for the same voice and text changes.
 TAG = "chatterbox-mtl-v3/t3-bf16/meanflow-2/textnorm-1/length-2/mp3-64k"
 DEFAULT_SETTINGS = {"exaggeration": 0.5, "cfg_weight": 0.5, "temperature": 0.8}
+MAX_VARIANT = 99  # takes of a text besides the default one (variant 0)
 MIN_REFERENCE_S = 5.0
 MAX_REFERENCE_S = 15.0
 
@@ -97,15 +98,19 @@ class Engine:
             self._conds[key] = Conditionals.load(path)
         return self._conds[key]
 
-    def speak(self, conds, language, text, settings=None, seed=None):
+    def speak(self, conds, language, text, settings=None, seed=None, variant=0):
         """Synthesizes `text` (as written; numbers are spelled out here). Returns (float32 wav, info).
-        A clip longer than plausible for its text is generated again with another seed (twice at most)."""
+        The seed comes from the language and the text, so a clip comes out the same every time; variant n
+        (1 to MAX_VARIANT) gives another take of the same text, reproducible as well (the model samples
+        its speech tokens, and the seed decides the draws). A clip longer than plausible for its text is
+        generated again with another seed (twice at most)."""
         settings = {**DEFAULT_SETTINGS, **(settings or {})}
         spoken = prepare(text, language)
         limit = plausible_seconds(spoken)
         self.token_cap = int(limit * TOKENS_PER_S) + 10
         if seed is None:
-            seed = int.from_bytes(hashlib.sha256(f"{language}|{text}".encode()).digest()[:4], "big")
+            base = f"{language}|{text}" + (f"|{variant}" if variant else "")
+            seed = int.from_bytes(hashlib.sha256(base.encode()).digest()[:4], "big")
         t3_cond = conds.t3.__class__(**vars(conds.t3)).to(dtype=torch.bfloat16)
         torch.set_num_threads(self.threads)  # per OS thread: the lab calls this from Gradio's worker threads
         best = None
@@ -202,8 +207,8 @@ def job_ready():
     return _engine is not None
 
 
-def job_speak(conds_path, language, text, settings):
-    wav, info = _engine.speak(_engine.conds(conds_path), language, text, settings)
+def job_speak(conds_path, language, text, settings, variant=0):
+    wav, info = _engine.speak(_engine.conds(conds_path), language, text, settings, variant=variant)
     return encode_mp3(wav), info
 
 

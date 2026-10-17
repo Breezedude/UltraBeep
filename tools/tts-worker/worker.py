@@ -123,21 +123,25 @@ class Worker:
         trial = clean_settings(msg.get("settings"))  # settings tried in the configurator
         # a line of a pack spoken in another language than the voice's ("GPS ok" in English by a German voice)
         language = msg.get("language") if msg.get("language") in LANGUAGES else voice.language
-        key = {**trial, "language": language} if language != voice.language else trial
+        # another take of the same text ("New variant" in the configurator); 0 is the default take
+        variant = msg.get("variant")
+        variant = variant if type(variant) is int and 0 < variant <= engine.MAX_VARIANT else 0
+        key = {**trial, **({"language": language} if language != voice.language else {}),
+               **({"variant": variant} if variant else {})}
         t0 = self.last_user = time.monotonic()
         data = self.cache.get(voice, text, key)
         cached = data is not None
         if not cached:
             data, info = await self.run_job(engine.job_speak, str(voice.conds), language, text,
-                                            {**voice.settings, **trial})
+                                            {**voice.settings, **trial}, variant)
             self.cache.put(voice, text, data, key)
             self.seconds = 0.8 * self.seconds + 0.2 * info["ms"] / 1000
             if info["attempts"] > 1:
                 log.info("%s %r: %d attempts (ran on past its text)", voice.name, text, info["attempts"])
         self.voices.touch(voice)
         ms = int((time.monotonic() - t0) * 1000)
-        log.info("%s%s %r %d B %d ms%s", voice.name, "" if language == voice.language else f" [{language}]", text,
-                 len(data), ms, " (cache)" if cached else "")
+        log.info("%s%s%s %r %d B %d ms%s", voice.name, "" if language == voice.language else f" [{language}]",
+                 f" #{variant}" if variant else "", text, len(data), ms, " (cache)" if cached else "")
         await self.send({"type": "audio", "id": msg["id"], "mime": "audio/mpeg", "cached": cached, "ms": ms,
                          "spoken": prepare(text, language), "data": base64.b64encode(data).decode()})
 

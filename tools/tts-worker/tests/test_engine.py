@@ -54,6 +54,18 @@ class RealEngine(unittest.TestCase):
         with self.assertRaises(engine.ReferenceError):
             self.e.conds_from_wav(engine.read_wav(short.getvalue()))
 
+    def test_variants(self):
+        """The same text comes out the same; a variant is another take, reproducible as well."""
+        np = self.engine.np
+        a = self.e.speak(self.e.builtin, "de", "Suche GPS")[0]
+        b = self.e.speak(self.e.builtin, "de", "Suche GPS")[0]
+        v1 = self.e.speak(self.e.builtin, "de", "Suche GPS", variant=1)[0]
+        v1b = self.e.speak(self.e.builtin, "de", "Suche GPS", variant=1)[0]
+        same = lambda x, y: len(x) == len(y) and float(np.max(np.abs(x - y))) < 1e-3
+        self.assertTrue(same(a, b))
+        self.assertTrue(same(v1, v1b))
+        self.assertFalse(same(a, v1))
+
 
 if __name__ == "__main__":
     unittest.main()

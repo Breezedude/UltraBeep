@@ -75,6 +75,16 @@ function renderVoicepack() {
     else delete draft.languages[name];
     savePackDraft(packId, draft);
   };
+  /* the take chosen for a line ("New variant"): Chatterbox voices only, Edge's speak a text the same every time */
+  const variantFor = (name) => (canGenerate && draft.variants[name]) || 0;
+  const clipOpt = (name, language = languageFor(name), variant = variantFor(name)) =>
+    ({ ...langOpt(language), ...(variant && homeVoice(settings.voice) ? { variant } : {}) });
+  const noteVariant = (name, variant) => {
+    if (!canGenerate || !catalogueText(name)) return;
+    if (variant > 0) draft.variants[name] = variant;
+    else delete draft.variants[name];
+    savePackDraft(packId, draft);
+  };
   const langTag = (name) => {
     const l = languageFor(name);
     return l ? el("span", { class: "lang-tag", title: `spoken in ${languageName(l)}` +
@@ -97,8 +107,9 @@ function renderVoicepack() {
   const startSel = el("select", { "aria-label": "Start from" }, el("option", { value: "" }, "the catalogue's texts"));
   const startNote = el("span", { class: "unit" }, "");
   const showStart = () => {
-    const n = Object.keys(draft.overrides).length, l = Object.keys(draft.languages).length;
-    startNote.textContent = [n ? `${n} text${n > 1 ? "s" : ""} changed` : "", l ? `${l} in another language` : ""].filter(Boolean).join(", ");
+    const n = Object.keys(draft.overrides).length, l = Object.keys(draft.languages).length, v = Object.keys(draft.variants).length;
+    startNote.textContent = [n ? `${n} text${n > 1 ? "s" : ""} changed` : "", l ? `${l} in another language` : "",
+      v ? `${v} with another variant` : ""].filter(Boolean).join(", ");
   };
   if (draft.base) {
     startSel.append(el("option", { value: draft.base }, draft.baseName || "a shared pack"));
@@ -112,16 +123,18 @@ function renderVoicepack() {
   }).catch(() => { /* the service is away: the catalogue only */ });
   startSel.addEventListener("change", async () => {
     const id = startSel.value;
-    if (Object.keys(draft.overrides).length && !window.confirm("Replace the changed texts of this pack with those of the new start?")) {
+    if ((Object.keys(draft.overrides).length || Object.keys(draft.variants).length) &&
+      !window.confirm("Replace the changed texts and variants of this pack with those of the new start?")) {
       startSel.value = draft.base || "";
       return;
     }
     if (!id) {
-      savePackDraft(packId, { base: null, baseName: "", overrides: {}, languages: {} });
+      savePackDraft(packId, { base: null, baseName: "", overrides: {}, languages: {}, variants: {} });
     } else {
       try {
         const full = await fetchPack(id);
-        savePackDraft(packId, { base: id, baseName: full.name, overrides: full.overrides, languages: full.languages || {} });
+        savePackDraft(packId, { base: id, baseName: full.name, overrides: full.overrides, languages: full.languages || {},
+          variants: full.variants || {} });
         Object.assign(settings, full.settings, { voice: full.voice, locale: "" });
         saveTtsSettings(settings);
       } catch (e) {
@@ -187,7 +200,7 @@ function renderVoicepack() {
       for (let i = 0; i < names.length; i++) {
         status.textContent = `Sample: ${i + 1} of ${names.length} (${names[i]}) …`;
         G.set(names[i], await generateClip(textFor(names[i]), settings, 1, 5,
-          { ...langOpt(languageFor(names[i])), onWait: waiting(status, `Sample ${i + 1} of ${names.length}`) }));
+          { ...clipOpt(names[i]), onWait: waiting(status, `Sample ${i + 1} of ${names.length}`) }));
         sample.push(names[i]);
       }
       status.textContent = `Sample: ${names.length} clips as the device plays them - "${names.map(textFor).join(" · ")}". ` +
@@ -227,6 +240,14 @@ function renderVoicepack() {
   const edLang = el("select", { "aria-label": "Spoken in" }, el("option", { value: "" }, `${languageName(packLanguage)} (the pack's language)`),
     ["en", ...CHATTERBOX_LANGUAGES.filter((l) => l !== "en")].filter((l) => l !== packLanguage)
       .map((l) => el("option", { value: l }, languageName(l))));
+  /* the take of the line: ◀ ▶ step through the variants, each generated at once (one made before comes from the cache) */
+  let edVariant = 0, edBusy = false;
+  const varPrev = el("button", { type: "button", class: "play", title: "The previous variant", "aria-label": "Previous variant" }, "◀");
+  const varNext = el("button", { type: "button", class: "play", title: "The next variant: another take of the same text",
+    "aria-label": "Next variant" }, "▶");
+  const varOut = el("output", { class: "unit" }, "");
+  const showVariant = () => { varOut.textContent = edVariant ? `variant ${edVariant}` : "the default take"; };
+  showVariant();
   const edWhat = el("p", { class: "sub" }, "");
   let edProfile = null; /* the profile whose voice line is in the editor */
   const edStatus = el("p", { class: "sub voice-status" }, "Pick a clip from the catalogue below (✎), or open a profile's voice line from its Identity card.");
@@ -246,6 +267,10 @@ function renderVoicepack() {
     edDevice.disabled = !deviceClient() || !onDevice(nameInput.value.trim());
     edLang.disabled = !homeVoice(settings.voice);
     edLang.title = edLang.disabled ? "Edge's voices speak their own language: choose a Breezedude (Chatterbox) voice for this" : "";
+    varPrev.disabled = !homeVoice(settings.voice) || edBusy || edVariant <= 0;
+    varNext.disabled = !homeVoice(settings.voice) || edBusy || edVariant >= TTS_MAX_VARIANT;
+    varNext.title = homeVoice(settings.voice) ? "The next variant: another take of the same text"
+      : "Edge's voices speak a text the same every time: choose a Breezedude (Chatterbox) voice for variants";
   };
   nameInput.addEventListener("input", edRefresh);
   const edit = (name, text, profile = null) => {
@@ -253,6 +278,8 @@ function renderVoicepack() {
     nameInput.value = name;
     textInput.value = text || (canGenerate ? textFor(name) : "") || "";
     edLang.value = profile ? "" : languageFor(name);
+    edVariant = profile ? 0 : variantFor(name);
+    showVariant();
     edWhat.textContent = profile
       ? `The voice line of profile ${profile} (${getP(profile, CUSTOM_NAME_KEY, true) || "custom name"}): stored as voices/custom/${name}.qoa ` +
         "and noted in the profile when you send it."
@@ -263,27 +290,44 @@ function renderVoicepack() {
     clipHead.scrollIntoView({ block: "start", behavior: "smooth" });
     textInput.focus();
   };
-  edGen.addEventListener("click", async () => {
+  const generateLine = async () => {
     const name = nameInput.value.trim(), text = textInput.value.trim();
     if (!clipNameOk(name)) { edStatus.textContent = "Pick a clip from the catalogue (✎) or open a profile's voice line first."; return; }
     if (!text) { edStatus.textContent = "Enter the text to speak."; return; }
     if (!picker.voiceSel.value) { setMessage("Choose a voice first.", true); return; }
-    edGen.disabled = true;
-    edStatus.textContent = "Asking the voice service …";
+    edBusy = edGen.disabled = true;
+    edRefresh();
+    const variant = homeVoice(settings.voice) ? edVariant : 0;
+    edStatus.textContent = `Asking the voice service${variant ? ` for variant ${variant}` : ""} …`;
     try {
-      const c = await generateClip(text, settings, 1, CLIP_MAX_S, { ...langOpt(edLang.value), onWait: waiting(edStatus, "Generating") });
+      const c = await generateClip(text, settings, 1, CLIP_MAX_S, { ...clipOpt(name, edLang.value, variant),
+        onWait: waiting(edStatus, "Generating") });
       G.set(name, c);
-      if (!edProfile) { noteText(name, text); noteLanguage(name, edLang.value); showStart(); } /* both stay with the pack */
-      edStatus.textContent = `Generated${c.spoken && c.spoken !== text ? `: "${c.spoken}"` : ""}, ${c.seconds.toFixed(2)} s, ` +
-        `${(c.bytes.length / 1024).toFixed(1)} kB${c.ms < 500 ? " (cached)" : ""}.`;
+      /* text, language and take stay with the pack */
+      if (!edProfile) {
+        noteText(name, text);
+        noteLanguage(name, edLang.value);
+        if (homeVoice(settings.voice)) noteVariant(name, variant); /* an Edge voice leaves the chosen take alone */
+        showStart();
+      }
+      edStatus.textContent = `Generated${variant ? ` (variant ${variant})` : ""}${c.spoken && c.spoken !== text ? `: "${c.spoken}"` : ""}, ` +
+        `${c.seconds.toFixed(2)} s, ${(c.bytes.length / 1024).toFixed(1)} kB${c.ms < 500 ? " (cached)" : ""}.`;
       playClip(c.bytes);
       renderCatalogue();
     } catch (e) {
       edStatus.textContent = e.message;
     }
-    edGen.disabled = false;
+    edBusy = edGen.disabled = false;
     edRefresh();
-  });
+  };
+  edGen.addEventListener("click", generateLine);
+  const stepVariant = (d) => {
+    edVariant = Math.max(0, Math.min(TTS_MAX_VARIANT, edVariant + d));
+    showVariant();
+    generateLine();
+  };
+  varPrev.addEventListener("click", () => stepVariant(-1));
+  varNext.addEventListener("click", () => stepVariant(1));
   edPlay.addEventListener("click", () => playClip(clipBytes(G.get(nameInput.value.trim()))));
   edSend.addEventListener("click", async () => {
     const name = nameInput.value.trim();
@@ -361,7 +405,7 @@ function renderVoicepack() {
         const clip = clips.shift();
         try {
           /* pack clips may be longer than Bluetooth ones; on the voice server they wait behind single clips */
-          G.set(clip.name, await generateClip(textFor(clip.name), settings, 1, 5, { ...langOpt(languageFor(clip.name)), bulk: true }));
+          G.set(clip.name, await generateClip(textFor(clip.name), settings, 1, 5, { ...clipOpt(clip.name), bulk: true }));
         } catch (e) {
           if (e.status === 429) { genCancel = true; failed.push("Rate limit of the service reached: raise RATE_LIMIT in the relay's .env for a whole pack."); }
           else if (e.status !== 400 && !retried.has(clip.name)) { retried.add(clip.name); clips.push(clip); continue; }
@@ -455,7 +499,7 @@ function renderVoicepack() {
       const name = shareName.value.trim();
       await sharePack({ name, lang: packId, voice: v.name, voice_label: v.friendly || v.name, clips,
         settings: { pitch: settings.pitch, rate: settings.rate, bandpass: settings.bandpass, lo: settings.lo, hi: settings.hi },
-        overrides: draft.overrides, languages: draft.languages, base: draft.base }, image,
+        overrides: draft.overrides, languages: draft.languages, variants: draft.variants, base: draft.base }, image,
       (n, total) => { shareStatus.textContent = `Uploading: ${Math.round((100 * n) / total)} % of ${(image.length / 1024 / 1024).toFixed(1)} MB …`; });
       sharedNames.push(name.toLowerCase());
       shareStatus.textContent = `Shared: "${name}" is in the list of the ${packName} packs (Voice) for everyone. ` +
@@ -502,9 +546,13 @@ function renderVoicepack() {
   customRow("Name", nameInput, "The clip's name as the firmware asks for it, set by the catalogue or by a profile's voice " +
     "line - never by hand, a clip under another name would never be played."),
   edWhat,
-  customRow("Text", textInput),
+  customRow("Text", textInput, textTips(true)),
   customRow("Spoken in", edLang, "The language this line is spoken in, the voice the same: e.g. \"GPS ok\" or \"Hike and Fly\" " +
     "in English within a German pack. Kept with the pack and shown in the catalogue (EN); Breezedude (Chatterbox) voices only."),
+  customRow("Variant", el("div", { class: "variant-pick" }, varPrev, varOut, varNext), "Another take of the same text: the " +
+    "voice draws its speech anew for every variant, and each one sounds the same every time (made once, then cached). When " +
+    "a line comes out wrong - a word added or swallowed - try ▶; ◀ goes back. The variant stays with the pack: the whole " +
+    "pack and a shared pack use it. Breezedude (Chatterbox) voices only; Edge's voices speak a text the same every time."),
   el("div", { class: "buttons" }, edGen, edPlay, edSend, edDevice), edStatus,
   el("div", { class: "subhead" }, "Whole pack", info("Every clip of the pack in its language, two at a time (the relay's " +
     "rate limit must allow it), packed into a FAT image the device mounts as the voice pack.", "Whole pack")),
@@ -562,7 +610,8 @@ function renderVoicepack() {
   const expanded = new Set();
   const clipRow = (c) => el("tr", { class: G.has(c.name) ? "done" : "" },
     el("td", { class: "mono" }, c.name),
-    el("td", {}, textFor(c.name), draft.overrides[c.name] ? el("small", { class: "unit", title: `catalogue: ${c.text}` }, " (changed)") : null),
+    el("td", {}, textFor(c.name), draft.overrides[c.name] ? el("small", { class: "unit", title: `catalogue: ${c.text}` }, " (changed)") : null,
+      variantFor(c.name) ? el("small", { class: "unit", title: "another take of this text (Variant in the editor)" }, ` · variant ${variantFor(c.name)}`) : null),
     el("td", { class: "actions" }, langTag(c.name),
       deviceClient() && onDevice(c.name) ? el("button", { class: "play", type: "button", title: "Play on the device",
         onclick: () => deviceTest(`SAY ${c.name} ${playVolume()}`) }, "▶") : null,

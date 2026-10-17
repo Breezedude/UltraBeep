@@ -25,10 +25,11 @@ once; only the operator deletes them (the admin API with `ADMIN_TOKEN`, used by 
 | `DELETE /v1/voices/own/<id>` | `{"deleted": true}`, or 404 |
 | `POST /v1/voices/public` with JSON `{"voice_id", "name", "locale", "gender", "settings", "audio", "consent": true}` | `201 {"voice": "cb:de-DE-<name>"}`: the own voice becomes a template for everyone (409 for a name taken in that language) |
 | `POST /v1/audio/speech` with `"settings": {"exaggeration", "cfg_weight", "temperature"}` | a worker clip with these Chatterbox settings (Custom speaker), cached apart from the plain one |
+| `POST /v1/audio/speech` with `"language": "en"` and/or `"variant": 1..99` | a worker clip spoken in another language than the voice's, and/or another take of the same text (each take reproducible, cached apart; 0 is the default take) |
 | `GET /v1/packs?lang=de` | `{"packs": [{"id", "name", "lang", "voice", "voice_label", "settings", "clips", "size", "created", "downloads", "base", "changed_texts"}]}` (the voice pack id as `lang`) |
-| `GET /v1/packs/<id>` | the same with `"overrides": {clip: text}` |
+| `GET /v1/packs/<id>` | the same with `"overrides": {clip: text}`, `"languages": {clip: language}` and `"variants": {clip: take}` |
 | `GET /v1/packs/<id>/file` | the `.ubpack` (`Content-Disposition: <lang>.ubpack`) |
-| `POST /v1/packs` with JSON `{"name", "lang", "voice", "voice_label", "clips", "size", "settings", "overrides", "base", "consent": true}` | `201 {"id", "upload_token", "part_size"}` (409: name taken in the language; own voices refused) |
+| `POST /v1/packs` with JSON `{"name", "lang", "voice", "voice_label", "clips", "size", "settings", "overrides", "languages", "variants", "base", "consent": true}` | `201 {"id", "upload_token", "part_size"}` (409: name taken in the language; own voices refused) |
 | `PUT /v1/packs/<id>/file?part=<n>&parts=<m>` with `X-Upload-Token` | `{"done"}`; the pack is listed after its last part |
 | `GET /v1/admin/packs`, `DELETE /v1/admin/packs/<id>` with `Authorization: Bearer <ADMIN_TOKEN>` | all packs with their state; deleting removes the file too |
 | `GET /v1/worker` (WebSocket upgrade, `Authorization: Bearer <WORKER_SECRET>`) | the worker's connection; protocol in `tools/tts-worker/README.md` |

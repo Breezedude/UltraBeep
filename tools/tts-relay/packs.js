@@ -3,7 +3,8 @@
  * relay; the .ubpack files live with the TTS worker at home and pass through the relay in parts.
  * A pack is published by anyone at once and deleted by the operator only (/v1/admin/packs).
  *   config: {"settings": {pitch, rate, bandpass, lo, hi}, "overrides": {clip name: spoken text},
- *            "languages": {clip name: language the line is spoken in, when not the pack's}}
+ *            "languages": {clip name: language the line is spoken in, when not the pack's},
+ *            "variants": {clip name: the take chosen for the line, 1 to 99, when not the default one}}
  * The overrides are the pack's own spellings of catalogue texts (a model reads "Hike and Fly" right
  * only as "Haik änd Flai"); a pack used as the start of another passes them on.
  */
@@ -45,9 +46,15 @@ export function cleanPack(body, maxChars) {
     languages[clip] = String(lang);
   }
   if (Object.keys(languages).length > 2000) throw new Error("too many languages");
+  const variants = {};
+  for (const [clip, v] of Object.entries(body.variants || {})) {
+    if (!CLIP_RE.test(clip) || !Number.isInteger(v) || v < 1 || v > 99) throw new Error(`bad variant for clip ${clip}`);
+    variants[clip] = v;
+  }
+  if (Object.keys(variants).length > 2000) throw new Error("too many variants");
   const clips = clamp(body.clips, 1, 5000, 0), size = clamp(body.size, 1, 2 ** 31, 0);
   return { name, lang, voice, voiceLabel: String(body.voice_label || voice).slice(0, 60), clips, size,
-    base: PACK_ID_RE.test(body.base || "") ? body.base : null, config: { settings: cleanSettings(body.settings), overrides, languages } };
+    base: PACK_ID_RE.test(body.base || "") ? body.base : null, config: { settings: cleanSettings(body.settings), overrides, languages, variants } };
 }
 
 export function openPacks(file) {

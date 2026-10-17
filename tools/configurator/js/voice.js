@@ -106,7 +106,8 @@ async function fetchTts(voice, text, opts = {}) {
       body: JSON.stringify({ model: "tts-1", input: text, voice, response_format: "mp3",
         pitch: Math.round(opts.pitch || 0), rate: Math.round(opts.rate || 0), priority: opts.bulk ? "bulk" : undefined,
         settings: opts.settings || undefined,    /* Chatterbox settings tried on the Custom speaker page */
-        language: opts.language || undefined }), /* a Chatterbox line in another language than the voice's */
+        language: opts.language || undefined,    /* a Chatterbox line in another language than the voice's */
+        variant: opts.variant || undefined }),   /* another take of the same text (Chatterbox), 1 to 99 */
     });
     if (res.ok) {
       if (opts.meta) {
@@ -512,9 +513,34 @@ function buildClip(entry, settings) {
   return entry.built;
 }
 
+const TTS_MAX_VARIANT = 99; /* takes of a text besides the default one (the relay's limit) */
+
+/* The help of a text field to be spoken: how to get a line right, with examples (an element for info()).
+ * variants: the page offers "Variant" (Custom voicepack); without, another take comes from a setting. */
+function textTips(variants) {
+  const q = (s) => el("q", {}, s);
+  const tip = (...parts) => el("li", {}, ...parts);
+  return el("div", { class: "tips" },
+    el("b", {}, "Getting a line right"),
+    el("ul", {},
+      tip("The voice reads what is written. Numbers become words on the voice server (", q("42"), " → ",
+        q("zweiundvierzig"), "); the status shows the text as it was spoken."),
+      tip("Punctuation shapes the line: a full stop ends it calmly (one is added when missing), ", q("!"),
+        " sounds more urgent, ", q("?"), " rises, a comma makes a short pause: ", q("Thermik, 2 Meter"), "."),
+      tip("Write a word as it should sound: a German voice says ", q("GPS"), " as \"Ge Pe Es\"; for the English sound write ",
+        q("Dschi Pi Es"), ". ", q("Hike and Fly"), " → ", q("Haik änd Flai"), ". Letters one by one: ", q("G P S"), "."),
+      tip("A whole line in another language: ", variants ? "Spoken in" : "Language",
+        " (", q("GPS ok"), " in English); a language cannot change within a line."),
+      tip("A word added or swallowed (", q("Suche GPS"), " comes out as \"Suche GPS nach\")? ", variants
+        ? "Try the next variant (▶): another take of the same text, the same every time it is asked for. "
+        : "Change a setting a little: every setting gives another take. ",
+      "A small change of the text gives another take too, e.g. ", q("Suche GPS."), " with a full stop."),
+      tip("Very short lines leave the voice little to hold on to and go wrong more often than longer ones.")));
+}
+
 /* Speaks `text` and keeps the raw audio; the returned entry also holds the clip built with the settings,
  * `spoken` (the text as the model got it, if the service tells) and `ms` (the time it took).
- * opts: {bulk, onWait, settings} for fetchTts. */
+ * opts: {bulk, onWait, settings, language, variant} for fetchTts. */
 async function generateClip(text, settings, vol = 1, maxS = CLIP_MAX_S, opts = {}) {
   const meta = {};
   const t0 = performance.now();
