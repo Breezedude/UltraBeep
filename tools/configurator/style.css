@@ -177,7 +177,8 @@ th button.info { margin-left: 4px; vertical-align: -3px; }
 .trigger-head h3 { font-size: 15px; font-weight: 650; margin: 0; }
 .trigger-head .when { color: var(--muted); font-size: 13px; }
 .trigger-head button.info { align-self: center; }
-.trigger-head .trigger-play { margin-left: auto; align-self: center; }
+.trigger-head .trigger-demo { margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 8px; }
+.trigger-head .demo-label { color: var(--muted); font-size: 13px; }
 .trigger-head input[type=checkbox] { align-self: center; appearance: none; -webkit-appearance: none; width: 34px; height: 18px; border-radius: 999px;
   background: color-mix(in srgb, var(--muted) 35%, var(--panel-2)); position: relative; cursor: pointer; transition: background .15s; flex: none; }
 .trigger-head input[type=checkbox]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;

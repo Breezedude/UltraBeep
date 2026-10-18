@@ -762,13 +762,17 @@ function triggerCard(n, trig) {
   });
   sw.setAttribute("aria-label", `${trig.label} enabled`);
   const settings = trig.settings.map((f) => row(f, settingValue(f), (v) => setP(n, f.key, v, !!f.ext)));
-  /* play button: the list as it is now (unsaved) with demo values on the connected device */
-  const play = deviceClient() ? el("button", { type: "button", class: "play trigger-play", disabled: !items.length,
-    title: "Play a demo of this list on the device (fixed example values)", "aria-label": `Play a demo of ${trig.label}`,
-    onclick: () => deviceTest(`ANNOUNCE ${trig.id} ${itemsText(items)}`) }, "▶") : null;
+  /* demo: the list as it is now (unsaved) with fixed example values, spoken by the connected device */
+  const device = deviceClient();
+  const demoTitle = !device ? "Connect the device over Bluetooth to hear the demo"
+    : !items.length ? "No blocks to play" : "Play this list on the device with example values (unsaved changes included)";
+  const demo = el("span", { class: "trigger-demo", title: demoTitle },
+    el("span", { class: "demo-label" }, "Demo"),
+    el("button", { type: "button", class: "play", disabled: !device || !items.length, "aria-label": `Play a demo of ${trig.label}`,
+      onclick: () => deviceTest(`ANNOUNCE ${trig.id} ${itemsText(items)}`) }, "▶"));
   card.append(
     el("div", { class: "trigger-head" }, sw, el("h3", {}, trig.label), trig.help ? info(trig.help, trig.label) : null,
-      el("span", { class: "when" }, trig.when), play),
+      el("span", { class: "when" }, trig.when), demo),
     el("div", { class: "trigger-body" },
       settings.length ? el("div", { class: "trigger-settings" }, settings) : null,
       pool, table, empty));
