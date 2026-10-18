@@ -11,7 +11,9 @@
  *   POST   /v1/voices/public  {"voice_id", "name", "locale", ...}  -> {"voice"}: an own voice for everyone
  *   GET    /v1/packs?lang=de, GET /v1/packs/<id>, GET /v1/packs/<id>/file   shared voice packs
  *   GET    /v1/packs/<id>/sample?names=takeoff,al/al_1230          clips out of a pack (base64 QOA)
- *   POST   /v1/packs, PUT /v1/packs/<id>/file?part=&parts=          publishing one (packs.js)
+ *   POST   /v1/packs, PUT /v1/packs/<id>/file?part=&parts=          publishing one (packs.js); with the
+ *          work's owner key a pack shared from it before is replaced in place
+ *   POST   /v1/works, GET /v1/works/<id>, PUT /v1/works/<id> {key}  the work behind a device's pack (packs.js)
  *   GET|DELETE /v1/admin/packs[/<id>]  (Authorization: Bearer ADMIN_TOKEN)   the operator's
  *   GET    /v1/worker  (WebSocket, Authorization: Bearer WORKER_SECRET): a worker's connection
  *   GET    /health
@@ -23,7 +25,7 @@ import { once } from "node:events";
 import http from "node:http";
 import msedge from "msedge-tts"; /* the Edge read-aloud protocol, maintained there (token scheme, versions) */
 import { WebSocketServer } from "ws";
-import { PACK_ID_RE, cleanPack, openPacks } from "./packs.js";
+import { PACK_ID_RE, cleanPack, cleanWork, openPacks } from "./packs.js";
 
 const { MsEdgeTTS, OUTPUT_FORMAT } = msedge;
 
@@ -52,6 +54,7 @@ const cfg = {
   ownLimit: parseInt(process.env.OWN_VOICE_LIMIT || "10", 10), /* uploads per IP and day */
   templateLimit: parseInt(process.env.TEMPLATE_LIMIT || "5", 10), /* public voices per IP and day */
   packLimit: parseInt(process.env.PACK_LIMIT || "5", 10),         /* shared packs per IP and day */
+  workLimit: parseInt(process.env.WORK_LIMIT || "50", 10),        /* new works per IP and day (their owners' updates are free) */
   packMaxBytes: parseInt(process.env.PACK_MAX_BYTES || String(40 * 2 ** 20), 10),
   packPartBytes: 2 ** 20,
   dbPath: process.env.DB_PATH || "data/relay.db",
@@ -580,19 +583,36 @@ async function publishVoice(req, res, ip) {
   }
 }
 
-/* A shared pack: its description first (201 {id, upload_token, part_size}), then the file in parts. */
+/*
+ * A shared pack: its description first (201 {id, upload_token, part_size}), then the file in parts. With "work"
+ * and that work's owner "key" the pack belongs to the work, and a pack the work shared before is replaced in
+ * place (the same id; the old file is served until the new one is complete).
+ */
 async function packCreate(req, res, ip) {
   const body = await readJson(req, 256 * 1024);
   if (body.consent !== true) return fail(res, 400, "consent is required");
   let pack;
   try { pack = cleanPack(body, cfg.maxChars); } catch (e) { return fail(res, 400, e.message); }
+  let work = null;
+  if (body.work !== undefined && body.work !== null) {
+    if (!PACK_ID_RE.test(String(body.work)) || !packs.works.owns(body.work, body.key)) return fail(res, 403, "not the owner of this work");
+    work = packs.works.get(body.work);
+  }
   if (pack.size > cfg.packMaxBytes) return fail(res, 413, `a pack may have ${Math.floor(cfg.packMaxBytes / 2 ** 20)} MB at most`);
   if (!workers.size) return fail(res, 503, "the voice server at home is offline: try again later");
   if (rateLimited(ip, packUploads, cfg.packLimit, 24 * 3600)) return fail(res, 429, `at most ${cfg.packLimit} shared packs per day`);
-  const made = packs.create(pack);
+  let prior = work && work.pack ? packs.get(work.pack) : null;
+  if (prior && prior.state !== "ready") {
+    /* the work's own upload that never finished: it goes, its name is free again */
+    try { await ask({ type: "pack_delete", pack: prior.file }); } catch (e) { /* not stored */ }
+    packs.remove(prior.id);
+    prior = null;
+  }
+  const made = prior ? packs.replace(prior.id, pack) : packs.create({ ...pack, work: work ? work.id : null });
   if (!made) return fail(res, 409, `there is a pack called "${pack.name}" in this language already`);
-  console.log(`${ip} pack ${made.id} "${pack.name}" (${pack.lang}, ${pack.voice}) announced, ${pack.size} B`);
-  return send(res, 201, { id: made.id, upload_token: made.token, part_size: cfg.packPartBytes });
+  if (work && !prior) packs.works.setPack(work.id, made.id);
+  console.log(`${ip} pack ${made.id} "${pack.name}" (${pack.lang}, ${pack.voice}) ${prior ? "to replace" : "announced"}, ${pack.size} B`);
+  return send(res, 201, { id: made.id, upload_token: made.token, part_size: cfg.packPartBytes, replaces: !!prior });
 }
 
 async function packPart(req, res, id, url) {
@@ -605,10 +625,17 @@ async function packPart(req, res, id, url) {
   let data;
   try { data = await readBody(req, cfg.packPartBytes); } catch (e) { return fail(res, 413, "part too large"); }
   const pack = packs.get(id);
-  if (!(parts >= 1 && part >= 0 && part < parts) || parts > Math.ceil(pack.size / cfg.packPartBytes) + 1) return fail(res, 400, "bad part");
+  const up = pack.pending || { file: pack.file, size: pack.size }; /* a replacement goes under its own storage name */
+  if (!(parts >= 1 && part >= 0 && part < parts) || parts > Math.ceil(up.size / cfg.packPartBytes) + 1) return fail(res, 400, "bad part");
   try {
-    const r = await ask({ type: "pack_put", pack: id, part, parts, data: data.toString("base64") });
-    if (r.done) {
+    const r = await ask({ type: "pack_put", pack: up.file, part, parts, data: data.toString("base64") });
+    if (r.done && pack.pending) {
+      const old = packs.replaced(id, r.sha256, r.size);
+      if (old !== up.file) {
+        try { await ask({ type: "pack_delete", pack: old }); } catch (e) { console.log(`pack ${id}: old file ${old} not deleted: ${e.message}`); }
+      }
+      console.log(`pack ${id} "${pack.pending.name}" replaced by its owner: ${r.size} B`);
+    } else if (r.done) {
       packs.ready(id, r.sha256, r.size);
       console.log(`pack ${id} "${pack.name}" published: ${r.size} B`);
     }
@@ -623,8 +650,9 @@ async function packDownload(req, res, id) {
   const pack = packs.get(id);
   if (!pack || pack.state !== "ready") return fail(res, 404, "no such pack");
   if (!workers.size) return fail(res, 503, "the voice server at home is offline: try again later");
+  const file = pack.file;
   let first;
-  try { first = await ask({ type: "pack_read", pack: id, offset: 0, length: cfg.packPartBytes }); } catch (e) { return fail(res, e.status || 502, e.message); }
+  try { first = await ask({ type: "pack_read", pack: file, offset: 0, length: cfg.packPartBytes }); } catch (e) { return fail(res, e.status || 502, e.message); }
   res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": first.size, "Cache-Control": "no-store",
     "Content-Disposition": `attachment; filename="${pack.lang}.ubpack"` });
   packs.counted(id);
@@ -634,7 +662,7 @@ async function packDownload(req, res, id) {
       if (!res.write(chunk)) await once(res, "drain");
       offset += chunk.length;
       if (offset >= first.size || res.destroyed) break;
-      chunk = Buffer.from((await ask({ type: "pack_read", pack: id, offset, length: cfg.packPartBytes })).data, "base64");
+      chunk = Buffer.from((await ask({ type: "pack_read", pack: file, offset, length: cfg.packPartBytes })).data, "base64");
     }
     res.end();
   } catch (e) {
@@ -652,7 +680,7 @@ async function packSample(res, id, url) {
   if (!names.length) return fail(res, 400, "names: clip names, comma-separated");
   const path = (n) => (n.includes("/") ? `${n}.qoa` : `voices/${n}.qoa`);
   try {
-    const r = await ask({ type: "pack_sample", pack: id, paths: names.map(path) });
+    const r = await ask({ type: "pack_sample", pack: pack.file, paths: names.map(path) });
     const clips = {};
     for (const n of names) if (r.clips && r.clips[path(n)]) clips[n] = r.clips[path(n)];
     return send(res, 200, { clips });
@@ -663,8 +691,35 @@ async function packSample(res, id, url) {
 const CLIP_NAME_RE = /^([a-z0-9_]{1,8}\/)?[a-z0-9_-]{1,32}$/;
 
 const packSummary = (p) => ({ id: p.id, lang: p.lang, name: p.name, voice: p.voice, voice_label: p.voice_label, clips: p.clips,
-  size: p.size, created: p.created, downloads: p.downloads, base: p.base, settings: p.settings,
+  size: p.size, created: p.created, downloads: p.downloads, base: p.base, work: p.work, settings: p.settings,
   changed_texts: Object.keys(p.overrides || {}).length });
+
+/* ---- works: what a device's voice pack is made of (packs.js) ---- */
+
+const workCreates = new Map(); /* ip -> [timestamps] of new works */
+
+/* A new work: 201 {id, key, version}. The key is its owner's: keep it (the configurator stores it on the device). */
+async function workCreate(req, res, ip) {
+  const body = await readJson(req, 512 * 1024);
+  let work;
+  try { work = cleanWork(body, cfg.maxChars); } catch (e) { return fail(res, 400, e.message); }
+  if (work.parent && !packs.works.get(work.parent)) work.parent = null;
+  if (rateLimited(ip, workCreates, cfg.workLimit, 24 * 3600)) return fail(res, 429, `at most ${cfg.workLimit} new packs per day`);
+  const made = packs.works.create(work);
+  console.log(`${ip} work ${made.id} (${work.lang}, ${work.voice}, ${Object.keys(work.data.clips).length} clips${work.parent ? `, from ${work.parent}` : ""})`);
+  return send(res, 201, made);
+}
+
+/* The owner overwrites a work: 200 {id, version}; 403 with another key (start a new work from it then). */
+async function workUpdate(req, res, id) {
+  const body = await readJson(req, 512 * 1024);
+  let work;
+  try { work = cleanWork(body, cfg.maxChars); } catch (e) { return fail(res, 400, e.message); }
+  const version = packs.works.update(id, body.key, work);
+  if (version === 0) return fail(res, 404, "no such work");
+  if (version < 0) return fail(res, 403, "not the owner of this work");
+  return send(res, 200, { id, version });
+}
 
 function isAdmin(req) {
   const auth = String(req.headers.authorization || "");
@@ -676,7 +731,10 @@ function isAdmin(req) {
 async function packDelete(res, id) {
   const pack = packs.get(id);
   if (!pack) return fail(res, 404, "no such pack");
-  try { await ask({ type: "pack_delete", pack: id }); } catch (e) { return fail(res, e.status || 502, e.message); }
+  try {
+    await ask({ type: "pack_delete", pack: pack.file });
+    if (pack.pending) await ask({ type: "pack_delete", pack: pack.pending.file });
+  } catch (e) { return fail(res, e.status || 502, e.message); }
   packs.remove(id);
   console.log(`pack ${id} "${pack.name}" deleted by the operator`);
   return send(res, 200, { deleted: true });
@@ -687,6 +745,10 @@ setInterval(async () => {
   for (const id of packs.stale(2 * 3600 * 1000)) {
     try { await ask({ type: "pack_delete", pack: id }); packs.remove(id); console.log(`pack ${id}: unfinished upload dropped`); } catch (e) { /* worker away: next time */ }
   }
+  for (const { id, file } of packs.stalePending(2 * 3600 * 1000)) {
+    try { await ask({ type: "pack_delete", pack: file }); } catch (e) { /* not stored, or the worker is away: the file stays unused */ }
+    console.log(`pack ${id}: unfinished replacement dropped`);
+  }
 }, 10 * 60 * 1000).unref();
 
 const server = http.createServer(async (req, res) => {
@@ -696,7 +758,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
   try {
     const p = url.pathname, m = req.method;
-    if (m === "GET" && p === "/health") return send(res, 200, { ok: true, workers: workers.size, packs: packs.count() });
+    if (m === "GET" && p === "/health") return send(res, 200, { ok: true, workers: workers.size, packs: packs.count(), works: packs.works.count() });
+    if (m === "POST" && p === "/v1/works") return await workCreate(req, res, ip);
+    const wk = /^\/v1\/works\/([a-z0-9]+)$/.exec(p);
+    if (wk && PACK_ID_RE.test(wk[1])) {
+      if (m === "PUT") return await workUpdate(req, res, wk[1]);
+      const work = packs.works.get(wk[1]);
+      if (m === "GET") return work ? send(res, 200, work) : fail(res, 404, "no such work");
+    }
     if (m === "GET" && p === "/v1/voices") return send(res, 200, await voiceList((url.searchParams.get("locale") || "").toLowerCase()));
     if (m === "POST" && p === "/v1/audio/speech") return await speech(req, res, ip);
     if (m === "POST" && p === "/v1/voices/own") return await ownVoiceCreate(req, res, ip, url);
@@ -718,7 +787,9 @@ const server = http.createServer(async (req, res) => {
     const adm = /^\/v1\/admin\/packs(?:\/([a-z0-9]+))?$/.exec(p);
     if (adm) {
       if (!isAdmin(req)) return fail(res, 403, "admin only");
-      if (m === "GET" && !adm[1]) return send(res, 200, { packs: packs.all().map((x) => ({ ...packSummary(x), state: x.state })) });
+      if (m === "GET" && !adm[1]) {
+        return send(res, 200, { packs: packs.all().map((x) => ({ ...packSummary(x), state: x.state, replacing: !!x.pending })) });
+      }
       if (m === "DELETE" && adm[1]) return await packDelete(res, adm[1]);
     }
     return fail(res, 404, "not found");

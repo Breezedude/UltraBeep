@@ -574,7 +574,49 @@ function voicepackWorkFromFile(text) {
   return { pack, draft, voice, audio, dropped };
 }
 
+/*
+ * The work behind a device's pack (the relay's /v1/works): the voice, the audio settings and every clip made for the
+ * device, {clips: {name: {t: text, l: language, v: take, f: 1 = a single file in voices/custom}}, built: when the
+ * pack file was last built}. Its id and owner key are in the device's configuration (voicepackWorkKeys), so every
+ * browser that opens it makes clips that sound like the rest of the pack.
+ */
+const voicepackWorkKeys = (packId) => ({ id: `voice_generator_work_${packId}_string`, key: `voice_generator_workkey_${packId}_string` });
+
+/* The draft of Custom voicepack from a work: the texts that differ from the catalogue's, the languages and takes. */
+function voicepackWorkDraft(work, lang) {
+  const overrides = {}, languages = {}, variants = {};
+  for (const [name, e] of Object.entries(work.clips || {})) {
+    const text = voicepackText(lang, name);
+    if (!text) continue; /* a clip the catalogue no longer has */
+    if (e.t !== text) overrides[name] = e.t;
+    if (e.l) languages[name] = e.l;
+    if (e.v) variants[name] = e.v;
+  }
+  return { overrides, languages, variants };
+}
+
+/* A clip against the work, with the text, language and take it would be made with now: "pack" (in the pack file
+ * as now), "file" (a single file on the device as now), "changed" (made otherwise before), "new" (the pack file
+ * lacks it), or "" (the work has nothing to say: the device uses the pack it had). */
+function voicepackWorkState(work, name, text, opt = {}) {
+  if (!work) return "";
+  const e = (work.clips || {})[name];
+  if (!e) return work.built ? "new" : "";
+  const same = e.t === text && (e.l || "") === (opt.language || "") && (e.v || 0) === (opt.variant || 0);
+  return !same ? "changed" : e.f ? "file" : "pack";
+}
+
+/* An entry of a work for a clip made with that text, language and take. */
+function voicepackWorkEntry(text, opt = {}, file = false) {
+  const e = { t: text };
+  if (opt.language) e.l = opt.language;
+  if (opt.variant) e.v = opt.variant;
+  if (file) e.f = 1;
+  return e;
+}
+
 if (typeof module !== "undefined") {
   module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension, voicepackGlideSteps,
-    voicepackWorkFile, voicepackWorkFromFile, VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION };
+    voicepackWorkFile, voicepackWorkFromFile, voicepackWorkKeys, voicepackWorkDraft, voicepackWorkState, voicepackWorkEntry,
+    VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION };
 }

@@ -15,6 +15,14 @@ relay keeps the pack descriptions in SQLite (`node:sqlite`, `DB_PATH`), the work
 uploads and downloads pass through the relay in 1 MB parts. Packs and voice templates are public at
 once; only the operator deletes them (the admin API with `ADMIN_TOKEN`, used by the worker's lab).
 
+Works (1.4): what a device's voice pack is made of - the voice, the audio settings and every clip the
+configurator made for the device (its text, language and take, and whether it is in the pack file or a
+single file in `voices/custom`) - so that a clip added or changed later sounds like the rest. A work is
+read by its id and never listed; the device's configuration names it (`voice_generator_work_<pack>_string`)
+with its owner key (`voice_generator_workkey_<pack>_string`). The key overwrites the work (no history);
+without it the configurator starts a new work from it (`parent`). A pack shared from a work belongs to it:
+its owner shares it again in place (the same pack id; the old file is served until the new one is complete).
+
 ## API
 
 | Request | Answer |
@@ -26,14 +34,17 @@ once; only the operator deletes them (the admin API with `ADMIN_TOKEN`, used by 
 | `POST /v1/voices/public` with JSON `{"voice_id", "name", "locale", "gender", "settings", "audio", "consent": true}` | `201 {"voice": "cb:de-DE-<name>"}`: the own voice becomes a template for everyone (409 for a name taken in that language) |
 | `POST /v1/audio/speech` with `"settings": {"exaggeration", "cfg_weight", "temperature"}` | a worker clip with these Chatterbox settings (Custom speaker), cached apart from the plain one |
 | `POST /v1/audio/speech` with `"language": "en"` and/or `"variant": 1..99` | a worker clip spoken in another language than the voice's, and/or another take of the same text (each take reproducible, cached apart; 0 is the default take) |
-| `GET /v1/packs?lang=de` | `{"packs": [{"id", "name", "lang", "voice", "voice_label", "settings", "clips", "size", "created", "downloads", "base", "changed_texts"}]}` (the voice pack id as `lang`) |
+| `GET /v1/packs?lang=de` | `{"packs": [{"id", "name", "lang", "voice", "voice_label", "settings", "clips", "size", "created", "downloads", "base", "work", "changed_texts"}]}` (the voice pack id as `lang`; `work`: the work it was shared from, or null) |
 | `GET /v1/packs/<id>` | the same with `"overrides": {clip: text}`, `"languages": {clip: language}` and `"variants": {clip: take}` |
 | `GET /v1/packs/<id>/file` | the `.ubpack` (`Content-Disposition: <lang>.ubpack`) |
-| `POST /v1/packs` with JSON `{"name", "lang", "voice", "voice_label", "clips", "size", "settings", "overrides", "languages", "variants", "base", "consent": true}` | `201 {"id", "upload_token", "part_size"}` (409: name taken in the language; own voices refused) |
+| `POST /v1/packs` with JSON `{"name", "lang", "voice", "voice_label", "clips", "size", "settings", "overrides", "languages", "variants", "base", "consent": true}` | `201 {"id", "upload_token", "part_size", "replaces"}` (409: name taken in the language; own voices refused). With `"work"` and that work's owner `"key"` (403 otherwise) the pack belongs to the work, and a pack the work shared before is replaced in place: the same id, `"replaces": true` |
+| `POST /v1/works` with JSON `{"lang", "name", "voice", "locale", "settings", "clips": {clip: {"t", "l"?, "v"?, "f"?}}, "built", "parent"?}` | `201 {"id", "key", "version": 1}`: a new work; the key is shown only here (the relay keeps its hash) |
+| `GET /v1/works/<id>` | the work: `{"id", "version", "lang", "name", "voice", "locale", "settings", "clips", "built", "parent", "pack", "created", "updated"}` |
+| `PUT /v1/works/<id>` with the same JSON and `"key"` | `{"id", "version"}`: overwritten, the version counted up (403: not its key, 404: no such work) |
 | `PUT /v1/packs/<id>/file?part=<n>&parts=<m>` with `X-Upload-Token` | `{"done"}`; the pack is listed after its last part |
 | `GET /v1/admin/packs`, `DELETE /v1/admin/packs/<id>` with `Authorization: Bearer <ADMIN_TOKEN>` | all packs with their state; deleting removes the file too |
 | `GET /v1/worker` (WebSocket upgrade, `Authorization: Bearer <WORKER_SECRET>`) | the worker's connection; protocol in `tools/tts-worker/README.md` |
-| `GET /health` | `{"ok": true, "workers": n, "packs": n}` |
+| `GET /health` | `{"ok": true, "workers": n, "packs": n, "works": n}` |
 
 Errors come as `{"error": {"message": ...}}` with 400 (input, voice, recording), 404 (own voice
 gone), 429 (rate limit, with `Retry-After`), 502 (Edge or the worker failed), 503 (the worker is
@@ -58,6 +69,7 @@ when asked again; nginx gives up after 30 s, so a request waits at most `WORKER_
   against the rate limit.
 * `OWN_VOICE_LIMIT` (10) own voices per IP and day, `OWN_VOICE_MAX_BYTES` (2000000) per recording
   (the configurator sends at most 20 s, about 1 MB).
+* `WORK_LIMIT` (50) new works per IP and day; their owners' updates do not count.
 * `TEMPLATE_LIMIT` (5) voice templates and `PACK_LIMIT` (5) shared packs per IP and day,
   `PACK_MAX_BYTES` (40 MB) per pack (a whole pack is about 16 MB). Unfinished uploads free their
   name after two hours.

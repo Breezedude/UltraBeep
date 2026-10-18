@@ -14,6 +14,9 @@
 
 const genClips = new Map(); /* clip name -> entry {raw, vol, maxS, text, bytes...}, generated in this session */
 let genCancel = false;
+/* the works behind devices' packs (the relay's /v1/works), fetched once per session: id -> work; ids asked for */
+const workCache = new Map();
+const workAsked = new Map(); /* id -> null while loading, or the error */
 
 /* The clip's file in the pack and in voices/custom: "al/al_10" -> "al/al_10.qoa", "takeoff" -> "voices/takeoff.qoa" */
 const packPath = (name) => (name.includes("/") ? `${name}.qoa` : `voices/${name}.qoa`);
@@ -102,6 +105,29 @@ function renderVoicepack() {
   const madeOf = (text, opt) => `${settings.voice}|${text}|${opt.language || ""}|${opt.variant || 0}`;
   const upToDate = (name) => G.has(name) && G.get(name).madeOf === madeOf(textFor(name), clipOpt(name));
 
+  /* ---- the work behind the device's pack (voicepackWorkKeys): the voice, the sound and the texts it was made with ---- */
+  const workKeys = voicepackWorkKeys(packId);
+  const workIds = () => ({ id: (state.ext && state.ext.get("global", workKeys.id)) || "", key: (state.ext && state.ext.get("global", workKeys.key)) || "" });
+  let work = workIds().id ? workCache.get(workIds().id) || null : null;
+  if (workIds().id && !work && !workAsked.has(workIds().id)) {
+    const id = workIds().id;
+    workAsked.set(id, null);
+    fetchWork(id).then((w) => { workCache.set(id, w); workAsked.delete(id); }, (e) => { workAsked.set(id, e); })
+      .then(() => { if (state.view === "voicepack") renderVoicepack(); });
+  }
+  /* once per version: the pack's voice and sound, and its texts, languages and takes as the draft - clips made now sound
+   * like the rest of the pack. Not while the draft starts from a shared pack (a work of one's own comes from that). */
+  if (work && !draft.fork && state.workApplied !== `${work.id}@${work.version}`) {
+    Object.assign(settings, work.settings, { voice: work.voice, locale: work.locale || "" });
+    saveTtsSettings(settings);
+    if (draft.work !== `${work.id}@${work.version}`) {
+      Object.assign(draft, voicepackWorkDraft(work, catalogLang), { work: `${work.id}@${work.version}` });
+      savePackDraft(packId, draft);
+    }
+    state.workApplied = `${work.id}@${work.version}`;
+  }
+  const workState = (name) => (draft.fork ? "" : voicepackWorkState(work, name, textFor(name), clipOpt(name)));
+
   /* ---- the voice pack ---- */
   const packField = SYSTEM_GROUPS.flatMap((g) => g.fields).find((f) => f.key === "system_language_string");
   const packSel = input(packField, systemValue("system_language_string"), (v) => {
@@ -134,14 +160,12 @@ function renderVoicepack() {
       return;
     }
     if (!id) {
-      savePackDraft(packId, { base: null, baseName: "", overrides: {}, languages: {}, variants: {} });
+      /* the device's work stays the one changed from here: its texts are not taken back into the draft */
+      savePackDraft(packId, { base: null, baseName: "", overrides: {}, languages: {}, variants: {},
+        work: work ? `${work.id}@${work.version}` : "", fork: "" });
     } else {
       try {
-        const full = await fetchPack(id);
-        savePackDraft(packId, { base: id, baseName: full.name, overrides: full.overrides, languages: full.languages || {},
-          variants: full.variants || {} });
-        Object.assign(settings, full.settings, { voice: full.voice, locale: "" });
-        saveTtsSettings(settings);
+        await startPackFrom(packId, { id });
       } catch (e) {
         setMessage(e.message, true);
         return;
@@ -171,7 +195,8 @@ function renderVoicepack() {
         "Switch the device's voice pack to it (System → Language and time)?")) return;
       if (changes(w.pack === packId ? draft : packDraft(w.pack)) &&
         !window.confirm("Replace the changed texts, languages and variants made here with those of the file?")) return;
-      savePackDraft(w.pack, w.draft);
+      /* the file's texts replace the device's work's in the draft (not taken back from the work afterwards) */
+      savePackDraft(w.pack, { ...w.draft, work: w.pack === packId && work ? `${work.id}@${work.version}` : "", fork: "" });
       Object.assign(settings, w.audio, w.voice ? { voice: w.voice, locale: "" } : {});
       saveTtsSettings(settings);
       if (w.pack !== packId) setSystemValue("system_language_string", w.pack);
@@ -184,6 +209,106 @@ function renderVoicepack() {
       setMessage(e.message, true);
     }
   });
+  /* what the device's pack is made of, and whether this browser makes clips like it */
+  const workLine = el("p", { class: "sub voice-status" }, "");
+  const workWarn = el("p", { class: "warn-text" }, "");
+  const workBack = el("button", { type: "button", hidden: true }, "Use the pack's voice and sound");
+  workBack.addEventListener("click", () => {
+    if (!work) return;
+    Object.assign(settings, work.settings, { voice: work.voice, locale: work.locale || "" });
+    saveTtsSettings(settings);
+    renderVoicepack();
+  });
+  const sameSound = (w) => settings.voice === w.voice && ["pitch", "rate", "bandpass", "lo", "hi"]
+    .every((k) => (k === "bandpass" ? !!settings[k] === !!w.settings[k] : (settings[k] | 0) === (w.settings[k] | 0)));
+  const showWork = () => {
+    const ids = workIds();
+    const error = ids.id ? workAsked.get(ids.id) : null;
+    workWarn.textContent = "";
+    workBack.hidden = true;
+    if (draft.fork) {
+      workLine.textContent = `Starting from the shared pack "${draft.baseName || draft.base}": the next clips sent to the device or ` +
+        "the next pack built start a pack record of your own from it (its voice, sound and texts; the owner key stays with your device).";
+      return;
+    }
+    if (!ids.id) {
+      workLine.textContent = "The device has no pack record yet. The first clips sent to it, or the first pack built here, start one: " +
+        "the voice, the sound and every text are kept with it, and the device's configuration names it - so clips made later, in any " +
+        "browser, sound like the rest of the pack.";
+      return;
+    }
+    if (!work) {
+      workLine.textContent = error ? `The device's pack record could not be loaded (${error.message}).` : "Loading the device's pack record …";
+      if (error) workWarn.textContent = "Clips made now may not match the device's pack.";
+      return;
+    }
+    const all = Object.values(work.clips);
+    const files = all.filter((e) => e.f).length;
+    workLine.textContent = `The device's ${packName} pack record (version ${work.version}${work.updated ? `, ${work.updated.slice(0, 10)}` : ""}): ` +
+      `${all.length} clips made with ${work.voice}` +
+      (work.built ? `, the pack file built on ${work.built.slice(0, 10)}` : ", no pack file built here (the device uses the pack it had)") +
+      (files ? `, ${files} single file${files > 1 ? "s" : ""} in voices/custom` : "") + ". " +
+      (ids.key ? "The device holds its owner key: changes update it."
+        : "Made by someone else: the first change on this device makes it your own copy (with its own owner key).");
+    if (!sameSound(work)) {
+      workWarn.textContent = `The pack was made with ${work.voice} (pitch ${work.settings.pitch}, rate ${work.settings.rate}` +
+        `${work.settings.bandpass ? `, band-pass ${work.settings.lo}-${work.settings.hi} Hz` : ""}): clips made with other settings will not ` +
+        "sound like the rest of it, and the next change on the device takes the new settings into the record.";
+      workBack.hidden = false;
+    }
+  };
+  showWork();
+  /*
+   * A change on the device - clips sent as single files ({files: names}), a pack file built from clips ({pack: names},
+   * downloaded or shared; {name} names it) - goes into the device's work: overwritten with its owner key, else a new
+   * work (the one before, or the shared pack started from, its parent) whose id and key the device's configuration
+   * then names, with the generator settings. One at a time; resolves to {work, key}, or null when it failed (said).
+   */
+  let workSaving = Promise.resolve();
+  const saveWork = (change) => (workSaving = workSaving.then(() => storeWork(change)).catch((e) => {
+    setMessage(`The device's pack record was not saved: ${e.message}`, true);
+    return null;
+  }));
+  const storeWork = async (change) => {
+    const ids = workIds();
+    const fork = draft.fork || "";
+    let base = null;
+    if (!fork && ids.id) {
+      base = workCache.get(ids.id) || await fetchWork(ids.id).catch((e) => { if (e.status === 404) return null; throw e; });
+    }
+    const clips = base ? { ...base.clips } : {};
+    for (const n of change.pack || []) clips[n] = voicepackWorkEntry(textFor(n), clipOpt(n), false);
+    for (const n of change.files || []) clips[n] = voicepackWorkEntry(textFor(n), clipOpt(n), true);
+    const body = { lang: packId, name: change.name ?? (base ? base.name : ""), voice: settings.voice, locale: settings.locale || "",
+      settings: { pitch: settings.pitch | 0, rate: settings.rate | 0, bandpass: !!settings.bandpass, lo: settings.lo | 0, hi: settings.hi | 0 },
+      clips, built: change.pack ? new Date().toISOString() : base ? base.built : null };
+    let made = null;
+    if (base && ids.key) {
+      try {
+        made = { id: ids.id, key: ids.key, version: (await updateWork(ids.id, ids.key, body)).version, parent: base.parent, pack: base.pack };
+      } catch (e) {
+        if (e.status !== 403 && e.status !== 404) throw e; /* not its owner after all: a work of one's own */
+      }
+    }
+    if (!made) {
+      const parent = fork && fork !== "new" ? fork : base ? base.id : null;
+      made = { ...(await createWork({ ...body, parent })), parent, pack: null };
+    }
+    work = { ...body, id: made.id, version: made.version, parent: made.parent, pack: made.pack, updated: new Date().toISOString() };
+    workCache.set(work.id, work);
+    state.workApplied = `${work.id}@${work.version}`;
+    draft.work = state.workApplied;
+    draft.fork = "";
+    savePackDraft(packId, draft);
+    const where = await storeExtGlobals({ [workKeys.id]: made.id, [workKeys.key]: made.key, ...ttsSettingsValues(settings) });
+    toast(`Pack record version ${work.version} saved` + (where === "ble" ? ", named in the device's configuration."
+      : where === "dir" ? ", named in the configuration on the SD card." : ": save the configuration to keep its name on the device."));
+    showWork();
+    showMerge(); /* the status lines keep what the action said */
+    renderCatalogue();
+    return { work, key: made.key };
+  };
+
   const packNote = el("p", { class: canGenerate ? "sub" : "warn-text" }, canGenerate
     ? `Clips are generated with the ${textsName} texts of the pack; the voices below speak ` +
       `${pack.language === "en" ? "English" : `${packName} or English`}.`
@@ -200,6 +325,7 @@ function renderVoicepack() {
   let liveTimer = null;
   const live = () => {
     saveTtsSettings(settings);
+    showWork(); /* the pack's sound or another */
     if (!sample.length) return;
     clearTimeout(liveTimer);
     liveTimer = setTimeout(() => playClips(sampleBytes(sample.slice(0, 4))), 150);
@@ -269,6 +395,7 @@ function renderVoicepack() {
     packInfo();
     edRefresh();        /* "Spoken in" works with Chatterbox voices only */
     renderCatalogue();  /* the clips of the voice before are out of date */
+    showWork();
   };
   picker.voiceSel.addEventListener("change", voiceChanged);
   picker.langSel.addEventListener("change", voiceChanged); /* the picker has chosen a voice of that language */
@@ -391,6 +518,7 @@ function renderVoicepack() {
         edStatus.textContent = `Stored on the device as ${customPath(name)} and set as the voice line of profile ${edProfile} - save the configuration.`;
       } else {
         edStatus.textContent = `Stored on the device as ${customPath(name)}; the device uses it instead of the pack's clip.`;
+        if (catalogueText(name)) saveWork({ files: [name] }); /* the device's pack record follows */
       }
       refreshDevice();
     } catch (e) {
@@ -431,6 +559,12 @@ function renderVoicepack() {
       (slow ? ` A Chatterbox voice takes about ${v.seconds} s per clip not made before - up to ` +
         `${Math.max(1, Math.round(((all - have) * v.seconds) / 60))} min for the rest; clips made already come at once.` : "");
     buildBtn.textContent = have === all ? `Build ${pack.id}.ubpack` : `Build ${pack.id}.ubpack (${all - have} missing)`;
+    showMerge();
+  };
+  const showMerge = () => {
+    const files = work && !draft.fork ? Object.values(work.clips).filter((e) => e.f).length : 0;
+    mergeBtn.hidden = !files;
+    mergeBtn.textContent = `Merge the ${files} single file${files === 1 ? "" : "s"} into a pack`;
   };
   /* One list at a time: both Generate buttons wait while one runs (the voice server makes two clips at once), the
    * extension clips' also while they are sent (the two share the progress line). */
@@ -526,30 +660,48 @@ function renderVoicepack() {
     }
     sending = false;
     extBar.hidden = true;
+    if (n) saveWork({ files: clips.slice(0, n).map((c) => c.name) }); /* the device's pack record follows */
     refreshDevice();
     renderCatalogue();
   };
   stopBtn.addEventListener("click", () => { genCancel = true; });
-  /* The .ubpack of the clips generated in this session with this voice, with the settings as they are now: {image, clips}. */
+  /* The .ubpack of the clips generated in this session with this voice, with the settings as they are now:
+   * {image, clips (count), names}. */
   const buildImage = () => {
-    const files = [];
+    const files = [], names = [];
     for (const c of voicepackClips(catalogLang)) {
-      if (upToDate(c.name)) files.push({ path: packPath(c.name), bytes: clipBytes(G.get(c.name)) });
+      if (!upToDate(c.name)) continue;
+      files.push({ path: packPath(c.name), bytes: clipBytes(G.get(c.name)) });
+      names.push(c.name);
     }
     if (!files.length) throw new Error("Nothing generated yet.");
     const date = new Date().toISOString().slice(0, 10);
     files.push({ path: "version.txt", bytes: new TextEncoder().encode(`${date}\n`) });
-    return { image: buildFat16Image(files, "UBVOICES"), clips: files.length - 1 };
+    return { image: buildFat16Image(files, "UBVOICES"), clips: names.length, names };
+  };
+  /* Packs go to the device by USB only (some MB: too much for Bluetooth): downloaded, then copied to voices/ on the card. */
+  const downloadPackFile = () => {
+    const { image, clips, names } = buildImage();
+    downloadBytes(`${pack.id}.ubpack`, image);
+    packStatus.textContent = `${pack.id}.ubpack: ${clips} clips, ${(image.length / 1024 / 1024).toFixed(1)} MB. Copy it to voices/ on the SD card ` +
+      `(over USB); the device loads it as the ${packName} pack.`;
+    saveWork({ pack: names }); /* the device's pack record: these clips are in the pack file now */
   };
   buildBtn.addEventListener("click", () => {
-    try {
-      const { image, clips } = buildImage();
-      downloadBytes(`${pack.id}.ubpack`, image);
-      packStatus.textContent = `${pack.id}.ubpack: ${clips} clips, ${(image.length / 1024 / 1024).toFixed(1)} MB. Copy it to voices/ on the SD card ` +
-        `(over USB); the device loads it as the ${packName} pack.`;
-    } catch (e) {
-      packStatus.textContent = e.message;
-    }
+    try { downloadPackFile(); } catch (e) { packStatus.textContent = e.message; }
+  });
+  /* the single files sent since the last pack, and every other clip, made with the pack's voice into one pack file */
+  const mergeBtn = el("button", { type: "button", hidden: true }, "Merge into a pack");
+  mergeBtn.addEventListener("click", async () => {
+    const all = voicepackClips(catalogLang);
+    if (!work || draft.fork) return;
+    if (!work.built && !window.confirm(`The device has no pack file of this record yet: the merge makes a whole ${packName} pack ` +
+      `(${all.length} clips) with ${settings.voice} - every clip, not only the single files. Go on?`)) return;
+    await runGeneration(all.filter((c) => !upToDate(c.name)), "clips of the pack", { status: packStatus, bar, stop: stopBtn, errors });
+    const missing = all.filter((c) => !upToDate(c.name)).length;
+    if (missing) { packStatus.textContent = `Not merged: ${missing} clips are not generated yet. Try again (the ones made already come at once).`; return; }
+    try { downloadPackFile(); } catch (e) { packStatus.textContent = e.message; return; }
+    packStatus.textContent += " Once it is on the card, the single files it holds can go from the device (Clips on the device).";
   });
 
   /* ---- sharing the pack with everyone ---- */
@@ -566,8 +718,15 @@ function renderVoicepack() {
     shareNote.className = `unit${taken ? " warn-text" : ""}`;
     return n.length >= 2 && !taken;
   };
-  fetchPacks(packId).then((list) => { sharedNames = list.map((p) => p.name.toLowerCase()); checkShareName(); }).catch(() => { /* away */ });
+  /* the pack this device's work shared before keeps its name (it is replaced in place) */
+  const ownShared = () => (work && !draft.fork && workIds().key ? work.pack : null);
+  if (work && work.name && ownShared()) shareName.value = work.name;
+  fetchPacks(packId).then((list) => {
+    sharedNames = list.filter((p) => p.id !== ownShared()).map((p) => p.name.toLowerCase());
+    checkShareName();
+  }).catch(() => { /* away */ });
   shareName.addEventListener("input", checkShareName);
+  if (ownShared()) shareBtn.textContent = "Update the shared pack";
   shareBtn.addEventListener("click", async () => {
     const all = voicepackClips(catalogLang).length, have = countGenerated();
     const v = picker.current();
@@ -579,15 +738,23 @@ function renderVoicepack() {
     shareBtn.disabled = true;
     try {
       shareStatus.textContent = "Building the pack …";
-      const { image, clips } = buildImage();
+      const { image, clips, names } = buildImage();
       const name = shareName.value.trim();
-      await sharePack({ name, lang: packId, voice: v.name, voice_label: v.friendly || v.name, clips,
+      /* the pack belongs to the device's work: others start from that (every text as made), its owner shares again in place */
+      const saved = await saveWork({ pack: names, name });
+      if (!saved) throw new Error("The pack record could not be saved, so the pack was not shared.");
+      const replacing = !!(saved.work.pack && saved.key);
+      const id = await sharePack({ name, lang: packId, voice: v.name, voice_label: v.friendly || v.name, clips,
         settings: { pitch: settings.pitch, rate: settings.rate, bandpass: settings.bandpass, lo: settings.lo, hi: settings.hi },
-        overrides: draft.overrides, languages: draft.languages, variants: draft.variants, base: draft.base }, image,
+        overrides: draft.overrides, languages: draft.languages, variants: draft.variants, base: draft.base,
+        work: saved.work.id, key: saved.key }, image,
       (n, total) => { shareStatus.textContent = `Uploading: ${Math.round((100 * n) / total)} % of ${(image.length / 1024 / 1024).toFixed(1)} MB …`; });
-      sharedNames.push(name.toLowerCase());
-      shareStatus.textContent = `Shared: "${name}" is in the list of the ${packName} packs (Voice) for everyone. ` +
+      work.pack = id; /* its name stays this work's: sharing again replaces it */
+      workCache.set(work.id, work);
+      shareStatus.textContent = (replacing ? `Updated: "${name}" in the list of the ${packName} packs (Voice) is this version now, ` +
+        "the one before is gone. " : `Shared: "${name}" is in the list of the ${packName} packs (Voice) for everyone. `) +
         "To have it removed, write to info@breezedude.de.";
+      shareBtn.textContent = "Update the shared pack";
       shareOk.checked = false;
       checkShareName();
     } catch (e) {
@@ -614,6 +781,7 @@ function renderVoicepack() {
       "to the device are exactly what you heard. \"Create a sample\" speaks a few typical lines as single clips, as the " +
       "device strings them together." },
   customRow("Voice pack", packSel, packField.help), packNote,
+  el("div", { class: "work-info" }, workLine, workWarn, workBack),
   customRow("Start from", el("div", { class: "band" }, startSel, startNote), "The catalogue texts, or a pack someone shared: " +
     "its voice, settings and changed texts come along (Voice lists the shared packs)."),
   customRow("Your changes", el("div", { class: "band" }, workSave, workLoad, workFile, workNote), "Changed texts, languages " +
@@ -644,8 +812,11 @@ function renderVoicepack() {
     "pack and a shared pack use it. Breezedude (Chatterbox) voices only; Edge's voices speak a text the same every time."),
   el("div", { class: "buttons" }, edGen, edPlay, edSend, edDevice), edStatus,
   el("div", { class: "subhead" }, "Whole pack", info("Every clip of the pack in its language, two at a time (the relay's " +
-    "rate limit must allow it), packed into a FAT image the device mounts as the voice pack.", "Whole pack")),
-  el("div", { class: "pack" }, el("div", { class: "buttons" }, allBtn, stopBtn, buildBtn, saveGen), bar, packStatus, errors));
+    "rate limit must allow it), packed into a FAT image the device mounts as the voice pack. A pack goes to the device " +
+    "over USB only: download it and copy it to voices/ on the SD card (some MB, too much for Bluetooth). Small changes go " +
+    "as single files (Send to device); \"Merge\" makes them and every other clip, with the pack's voice, into a new pack " +
+    "file - once it is on the card, the single files it holds can go (Clips on the device).", "Whole pack")),
+  el("div", { class: "pack" }, el("div", { class: "buttons" }, allBtn, stopBtn, buildBtn, mergeBtn, saveGen), bar, packStatus, errors));
 
   /* ---- the clips on the device ---- */
   const devBody = el("tbody", {});
@@ -707,17 +878,43 @@ function renderVoicepack() {
       for (const f of devList) deviceClips.add(f.name.replace(/\.qoa$/, ""));
       renderDevice();
       devNote.textContent = devList.length ? `${devList.length} clips in voices/custom.` : "No clips in voices/custom: the device uses the pack only.";
+      showPrune();
       edRefresh();
       renderCatalogue(); /* the ▶ buttons follow what the device has */
     } catch (e) {
       devNote.textContent = e.message.includes("not allowed") ? "This firmware cannot list the clips." : e.message;
     }
   };
+  /* single files whose clip the pack file has now (a merge): they would hide a later change of the pack */
+  const inPack = () => (work && work.built && !draft.fork ? [...deviceClips].filter((n) => work.clips[n] && !work.clips[n].f) : []);
+  const prune = el("button", { type: "button", hidden: true }, "");
+  const showPrune = () => {
+    const n = inPack().length;
+    prune.hidden = !n || !deviceClient();
+    prune.textContent = `Remove the ${n} single file${n === 1 ? "" : "s"} the pack has`;
+  };
+  prune.addEventListener("click", async () => {
+    const client = deviceClient(), names = inPack();
+    if (!client || !names.length || !window.confirm(`Delete ${names.length} single files from voices/custom? Their clips are in the ` +
+      `pack file built on ${work.built.slice(0, 10)} - only once that pack is on the SD card, else the device falls back to the pack before.`)) return;
+    prune.disabled = true;
+    let n = 0;
+    try {
+      for (const name of names) {
+        devNote.textContent = `Deleting ${name} (${n + 1} of ${names.length}) …`;
+        await client.deleteFile(customPath(name));
+        n++;
+      }
+      setMessage(`${n} single files deleted: the device plays these clips from the pack.`);
+    } catch (e) { setMessage(`${e.message} (${n} of ${names.length} deleted)`, true); }
+    prune.disabled = false;
+    refreshDevice();
+  });
   const deviceCard = fieldset({ title: "Clips on the device", help: "The single files in voices/custom on the SD card. " +
       "They replace the pack's clips of the same name; a deleted one gives the pack's clip back." },
   devNote, el("div", { class: "scroll-x" }, el("table", { class: "cliplist" },
     el("thead", {}, el("tr", {}, el("th", {}, "File"), el("th", {}, "Size"), el("th", {}, ""))), devBody)),
-  deviceClient() ? el("div", { class: "buttons" }, el("button", { type: "button", onclick: refreshDevice }, "Refresh")) : null);
+  deviceClient() ? el("div", { class: "buttons" }, el("button", { type: "button", onclick: refreshDevice }, "Refresh"), prune) : null);
 
   /* ---- the catalogue: the extension clips and the original pack's clips, two tables, one filter ---- */
   const filter = el("input", { type: "text", placeholder: "filter by name or text", "aria-label": "Filter" });
@@ -735,16 +932,33 @@ function renderVoicepack() {
   extStop.addEventListener("click", () => { genCancel = true; });
   /* number series ("al/al_-100 … al/al_7000", the hours, the speeds, the load factors) fold into one row each; the words come first */
   const expanded = new Set();
+  /* where the clip stands against the device's pack record */
+  const WORK_TAGS = {
+    pack: ["in pack", "In the device's pack file, made with this text, language and take"],
+    file: ["single file", "A single file on the device (voices/custom), made with this text, language and take"],
+    changed: ["changed", "The device has this clip made otherwise (another text, language or take): generate and send it to change it there"],
+    new: ["not in pack", "The device's pack file has no such clip yet (new in the catalogue): generate and send it, or merge into a pack"],
+  };
+  const workTag = (name) => {
+    const s = workState(name);
+    return s ? el("span", { class: `work-tag ${s}`, title: WORK_TAGS[s][1] }, WORK_TAGS[s][0]) : null;
+  };
   const clipRow = (c) => el("tr", { class: upToDate(c.name) ? "done" : "" },
     el("td", { class: "mono" }, c.name),
     el("td", {}, textFor(c.name), draft.overrides[c.name] ? el("small", { class: "unit", title: `catalogue: ${c.text}` }, " (changed)") : null,
       variantFor(c.name) ? el("small", { class: "unit", title: "another take of this text (Variant in the editor)" }, ` · variant ${variantFor(c.name)}`) : null),
-    el("td", { class: "actions" }, langTag(c.name),
+    el("td", { class: "actions" }, workTag(c.name), langTag(c.name),
       deviceClient() && onDevice(c.name) ? el("button", { class: "play", type: "button", title: "Play on the device",
         onclick: () => deviceTest(`SAY ${c.name} ${playVolume()}`) }, "▶") : null,
       G.has(c.name) ? el("button", { class: "play", type: "button", title: "Play the generated clip here",
         onclick: () => playClip(clipBytes(G.get(c.name))) }, "♪") : null,
       el("button", { class: "play", type: "button", title: "Edit", onclick: () => edit(c.name, canGenerate ? textFor(c.name) : "") }, "✎")));
+  /* the clips of a list against the device's pack record, as words: "117 in pack, 2 changed" */
+  const workCounts = (list) => {
+    const n = { pack: 0, file: 0, changed: 0, new: 0 };
+    for (const c of list) { const s = workState(c.name); if (s) n[s]++; }
+    return Object.entries(n).filter(([, v]) => v).map(([k, v]) => `${v} ${WORK_TAGS[k][0]}`).join(", ");
+  };
   const seriesKey = (name) => {
     if (/^\d+$/.test(name)) return "number";
     if (/^\d+_percent$/.test(name)) return "percent";
@@ -768,6 +982,7 @@ function renderVoicepack() {
       const have = list.filter((c) => upToDate(c.name)).length;
       /* extension clips: how many voices/custom on the device has */
       const sent = deviceClient() && list[0].stock === false ? list.filter((c) => deviceClips.has(c.name)).length : 0;
+      const states = workCounts(list);
       const open = expanded.has(key);
       rows.push(el("tr", { class: "group" + (have === list.length ? " done" : "") },
         el("td", { class: "mono" }, el("button", { class: "fold", type: "button", "aria-expanded": String(open),
@@ -775,7 +990,7 @@ function renderVoicepack() {
         ` ${list[0].name} … ${list[list.length - 1].name}`),
         el("td", {}, `${list.length} clips: "${list[0].text}" … "${list[list.length - 1].text}"`),
         el("td", { class: "actions" }, el("span", { class: "unit" },
-          [have ? `${have} of ${list.length} generated` : "", sent ? `${sent} on the device` : ""].filter(Boolean).join(" · ")))));
+          [have ? `${have} of ${list.length} generated` : "", sent ? `${sent} on the device` : "", states].filter(Boolean).join(" · ")))));
       if (open) rows.push(...list.map(clipRow));
     }
     return { rows, words, series };
@@ -790,9 +1005,11 @@ function renderVoicepack() {
     extBody.replaceChildren(...(q ? extShown.map(clipRow) : folded(ext).rows));
     const extDone = ext.filter((c) => upToDate(c.name)).length;
     const extOnDevice = ext.filter((c) => deviceClips.has(c.name)).length;
+    const extStates = workCounts(ext);
     extNote.textContent = (q ? `${extShown.length} of ${ext.length} match; ` : "") +
       `${extDone} of ${ext.length} generated with this voice in this session` +
-      (deviceClient() ? `, ${extOnDevice} of ${ext.length} on the device (voices/custom).` : ".");
+      (deviceClient() ? `, ${extOnDevice} of ${ext.length} on the device (voices/custom)` : "") +
+      (extStates ? `; the device's pack record: ${extStates}.` : ".");
     genButtons();
     extSend.hidden = !deviceClient();
     extSend.disabled = !deviceClient() || !extDone || generating || sending;
@@ -806,8 +1023,10 @@ function renderVoicepack() {
     }
     const { rows, words, series } = folded(stock);
     stockBody.replaceChildren(...rows);
+    const stockStates = workCounts(stock);
     stockNote.textContent = `${words.length} words and ${series.length} number series (${stock.length} clips) in ` +
-      `${textsName}${canGenerate ? "" : ` (no ${packName} texts yet)`}.`;
+      `${textsName}${canGenerate ? "" : ` (no ${packName} texts yet)`}${stockStates ? `; the device's pack record: ${stockStates}` : ""}.`;
+    showPrune();
   };
   filter.addEventListener("input", renderCatalogue);
   extGen.addEventListener("click", () => runGeneration(voicepackClips(catalogLang).filter((c) => c.stock === false && !upToDate(c.name)),

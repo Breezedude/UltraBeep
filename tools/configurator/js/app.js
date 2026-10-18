@@ -2260,6 +2260,38 @@ function applyNowLink(client, later) {
   return a;
 }
 
+/*
+ * [global] values of config_ext.ultrabip stored at once where the configuration came from - the device over
+ * Bluetooth or the SD card folder - without the other unsaved changes: they go into the file as it was last saved
+ * and into the one being edited. A new configuration only keeps them for its next save. Returns where they went:
+ * "ble", "dir", or "" (not stored yet).
+ */
+async function storeExtGlobals(values) {
+  const doc = state.ext, src = state.source;
+  if (!doc || !src) return "";
+  const saved = new IniDoc(doc.original);
+  for (const [k, v] of Object.entries(values)) {
+    doc.set("global", k, v);
+    saved.set("global", k, v);
+  }
+  let where = "";
+  if (saved.text === doc.original) {
+    where = src.kind === "new" ? "" : src.kind; /* nothing new to store */
+  } else if (src.kind === "ble" && src.client.connected) {
+    await src.client.putFile("config_ext.ultrabip", saved.text);
+    where = "ble";
+  } else if (src.kind === "dir") {
+    const h = await (await src.dir.getDirectoryHandle(EXT_DIR, { create: true })).getFileHandle("config_ext.ultrabip", { create: true });
+    const w = await h.createWritable();
+    await w.write(saved.text);
+    await w.close();
+    where = "dir";
+  }
+  if (where) doc.original = saved.text;
+  refreshStatus();
+  return where;
+}
+
 async function save() {
   const changed = [["config.ultrabip", state.stock], ["config_ext.ultrabip", state.ext]].filter(([, d]) => d.changed);
   const later = state.stock && state.ext && changed.length ? powerOnOnlyChanges() : [];

@@ -87,6 +87,29 @@ check(own.lang === "fr" && own.language === "fr" && own.tts === "fr-FR", "lookup
 check(odd.lang === null && odd.language === "xx", "lookup: an unknown name");
 check(voicepackInfo("").id === "de" && voicepackInfo(" DE ").id === "de", "lookup: empty and padded values");
 
+/* the work behind a device's pack: the draft taken from it, the state of a clip against it, its entries */
+const { voicepackWorkKeys, voicepackWorkDraft, voicepackWorkState, voicepackWorkEntry } = require(path.join(__dirname, "..", "js", "voicepack.js"));
+const devWork = { built: "2026-10-18T12:00:00.000Z", clips: {
+  takeoff: { t: "Abflug" }, profile_hike: { t: "Haik änd Flai" }, gps_ok: { t: "GPS ok", l: "en" }, no_gps: { t: "Suche GPS", v: 3 },
+  "glide/glide_87": { t: "8.7", f: 1 }, gone_clip: { t: "weg" } } };
+const wd = voicepackWorkDraft(devWork, "de");
+check(JSON.stringify(wd.overrides) === JSON.stringify({ profile_hike: "Haik änd Flai" }) && wd.languages.gps_ok === "en" &&
+  wd.variants.no_gps === 3 && !("gone_clip" in wd.overrides) && Object.keys(wd.languages).length === 1,
+"work draft: only the texts that differ from the catalogue, the languages and takes; clips the catalogue lacks left out");
+check(voicepackWorkState(devWork, "takeoff", "Abflug") === "pack" && voicepackWorkState(devWork, "glide/glide_87", "8.7") === "file" &&
+  voicepackWorkState(devWork, "takeoff", "Start") === "changed" && voicepackWorkState(devWork, "gps_ok", "GPS ok") === "changed" &&
+  voicepackWorkState(devWork, "gps_ok", "GPS ok", { language: "en" }) === "pack" &&
+  voicepackWorkState(devWork, "no_gps", "Suche GPS", { variant: 3 }) === "pack" && voicepackWorkState(devWork, "no_gps", "Suche GPS") === "changed" &&
+  voicepackWorkState(devWork, "landing", "Landung") === "new" && voicepackWorkState({ ...devWork, built: null }, "landing", "Landung") === "" &&
+  voicepackWorkState(null, "takeoff", "Abflug") === "",
+"clip states against the work: in pack, single file, changed (text, language, take), new in the catalogue, nothing without a pack file");
+check(JSON.stringify(voicepackWorkEntry("GPS ok", { language: "en" })) === '{"t":"GPS ok","l":"en"}' &&
+  JSON.stringify(voicepackWorkEntry("8.7", {}, true)) === '{"t":"8.7","f":1}' &&
+  JSON.stringify(voicepackWorkEntry("Suche GPS", { variant: 2 })) === '{"t":"Suche GPS","v":2}',
+"work entries: language, take and the single-file mark only when there");
+check(voicepackWorkKeys("de").id === "voice_generator_work_de_string" && voicepackWorkKeys("us").key === "voice_generator_workkey_us_string",
+  "the work's id and owner key in config_ext.ultrabip, per voice pack");
+
 /* the work file of Custom voicepack: saved and loaded again; unknown clips and bad values are left out */
 const { voicepackWorkFile, voicepackWorkFromFile } = require(path.join(__dirname, "..", "js", "voicepack.js"));
 const work = voicepackWorkFile("de", { base: "08cad7bea59ed4e777c6", baseName: "Google Chirp3-HD",

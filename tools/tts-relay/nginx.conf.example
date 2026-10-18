@@ -37,9 +37,10 @@ server {
         proxy_send_timeout 120s;
     }
 
-    # Uploads: recordings for own voices (up to 20 s of 16-bit WAV, about 1 MB) and the 1 MB parts
-    # of shared packs; the pack downloads take this way too.
-    location ~ ^/v1/(voices/own|packs/[a-z0-9]+/file)$ {
+    # Uploads: recordings for own voices (up to 20 s of 16-bit WAV, about 1 MB), the 1 MB parts
+    # of shared packs (the pack downloads take this way too) and the works behind devices' packs
+    # (every clip's text: about 100 kB for a whole pack).
+    location ~ ^/v1/(voices/own|packs/[a-z0-9]+/file|works(/[a-z0-9]+)?)$ {
         client_max_body_size 2m;
         proxy_pass http://127.0.0.1:5055;
         proxy_http_version 1.1;

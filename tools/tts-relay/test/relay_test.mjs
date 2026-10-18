@@ -273,6 +273,82 @@ try {
   r = await fetch(`${base}/v1/packs/${made.id}/file`);
   check(r.status === 404, "a deleted pack is gone");
 
+  /* works: what a device's pack is made of; its owner overwrites it, the key never comes back */
+  const json = (method, url, body) => fetch(`${base}${url}`, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const workBody = { lang: "de", name: "Mein Vario", voice: VOICE, locale: "de-DE", settings: { pitch: -1, rate: 8, bandpass: true, lo: 300, hi: 8000 },
+    clips: { takeoff: { t: "Abflug" }, gps_ok: { t: "GPS ok", l: "en" }, no_gps: { t: "Suche GPS", v: 3 }, "glide/glide_87": { t: "8.7", f: 1 } },
+    built: "2026-10-18T12:00:00Z" };
+  r = await json("POST", "/v1/works", { ...workBody, lang: "deu" });
+  check(r.status === 400, "work with a bad language: 400");
+  r = await json("POST", "/v1/works", { ...workBody, clips: { "../x": { t: "a" } } });
+  check(r.status === 400, "work with a bad clip name: 400");
+  r = await json("POST", "/v1/works", { ...workBody, clips: { takeoff: { t: "A", v: 100 } } });
+  check(r.status === 400, "work with a take out of range: 400");
+  r = await json("POST", "/v1/works", workBody);
+  const wk = await r.json();
+  check(r.status === 201 && /^[a-z0-9]{20}$/.test(wk.id) && /^[a-f0-9]{48}$/.test(wk.key) && wk.version === 1, "work created with its owner key");
+  r = await fetch(`${base}/v1/works/${wk.id}`);
+  j = await r.json();
+  check(r.ok && j.version === 1 && j.voice === VOICE && j.settings.rate === 8 && j.clips.gps_ok.l === "en" && j.clips.no_gps.v === 3 &&
+    j.clips["glide/glide_87"].f === 1 && !j.clips.takeoff.f && j.built === "2026-10-18T12:00:00.000Z" && !("key" in j) && !("owner" in j),
+  "work read back: clips, languages, takes, single files, the build time; no key");
+  r = await json("PUT", `/v1/works/${wk.id}`, { ...workBody, key: "0".repeat(48), clips: {} });
+  check(r.status === 403, "overwriting with another key: 403");
+  r = await json("PUT", `/v1/works/${"z".repeat(20)}`, { ...workBody, key: wk.key });
+  check(r.status === 404, "overwriting a work that is not there: 404");
+  r = await json("PUT", `/v1/works/${wk.id}`, { ...workBody, key: wk.key, clips: { takeoff: { t: "Start!" } }, built: null });
+  j = await r.json();
+  check(r.ok && j.version === 2, "the owner overwrites: version 2");
+  r = await fetch(`${base}/v1/works/${wk.id}`);
+  j = await r.json();
+  check(j.version === 2 && Object.keys(j.clips).join() === "takeoff" && j.clips.takeoff.t === "Start!" && j.built === null,
+    "the old state is not kept");
+  r = await json("POST", "/v1/works", { ...workBody, parent: wk.id });
+  const fork = await r.json();
+  r = await fetch(`${base}/v1/works/${fork.id}`);
+  check(fork.id !== wk.id && fork.key !== wk.key && (await r.json()).parent === wk.id, "a new work from it: its own id and key, the parent noted");
+  r = await json("POST", "/v1/works", { ...workBody, parent: "q".repeat(20) });
+  r = await fetch(`${base}/v1/works/${(await r.json()).id}`);
+  check((await r.json()).parent === null, "an unknown parent is dropped");
+
+  /* a pack shared from a work: shared again by its owner in place, the old file served until the new one is there */
+  const upload = async (id, token, bytes, size = 2 ** 20) => {
+    let fin = false;
+    for (let i = 0, n = Math.ceil(bytes.length / size); i < n; i++) {
+      const u = await fetch(`${base}/v1/packs/${id}/file?part=${i}&parts=${n}`, { method: "PUT", headers: { "X-Upload-Token": token },
+        body: bytes.subarray(i * size, (i + 1) * size) });
+      fin = (await u.json()).done;
+    }
+    return fin;
+  };
+  const fileA = Buffer.alloc(1.5 * 2 ** 20, 1), fileB = Buffer.alloc(1.2 * 2 ** 20, 2);
+  const workPack = { ...packBody, name: "Vario Pack", size: fileA.length, work: wk.id, key: wk.key };
+  r = await createPack({ ...workPack, key: fork.key });
+  check(r.status === 403, "sharing for a work with another key: 403");
+  r = await createPack(workPack);
+  const shared = await r.json();
+  check(r.status === 201 && !shared.replaces && (await upload(shared.id, shared.upload_token, fileA)), "pack shared from a work");
+  r = await fetch(`${base}/v1/works/${wk.id}`);
+  j = await r.json();
+  r = await fetch(`${base}/v1/packs/${shared.id}`);
+  check(j.pack === shared.id && (await r.json()).work === wk.id, "the work knows its shared pack and the pack its work");
+  r = await createPack({ ...workPack, name: "Vario Pack 2", size: fileB.length, settings: { pitch: 9 } });
+  const again = await r.json();
+  check(r.status === 201 && again.id === shared.id && again.replaces, "shared again by the owner: the same pack id");
+  r = await fetch(`${base}/v1/packs/${shared.id}/file`);
+  check(Buffer.from(await r.arrayBuffer()).equals(fileA), "the old file is served while the new one comes");
+  check(await upload(shared.id, again.upload_token, fileB), "the new file uploaded");
+  r = await fetch(`${base}/v1/packs/${shared.id}/file`);
+  const nowFile = Buffer.from(await r.arrayBuffer());
+  r = await fetch(`${base}/v1/packs?lang=de`);
+  j = await r.json();
+  check(nowFile.equals(fileB) && !stored.has(shared.id) && j.packs.length === 1 && j.packs[0].name === "Vario Pack 2" &&
+    j.packs[0].settings.pitch === 9 && j.packs[0].size === fileB.length, "replaced in place: new file, name and settings; the old file deleted");
+  r = await createPack({ ...packBody, name: "vario pack 2", size: fileA.length });
+  check(r.status === 409, "its name stays taken for others");
+  r = await fetch(`${base}/v1/admin/packs/${shared.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${ADMIN}` } });
+  check(r.ok && stored.size === 0, "the operator deletes it with its current file");
+
   /* a worker that drops with a job: the job waits for the next one */
   w.ws.close();
   await sleep(100);

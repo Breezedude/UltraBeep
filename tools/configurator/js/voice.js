@@ -62,14 +62,15 @@ function ttsSettingsFromDoc(ext) {
     bandpass: get("bandpass") !== "false", lo: int("lo", 300), hi: int("hi", 8000) };
 }
 
+/* The settings as the [global] values of the document: {key: value}. */
+function ttsSettingsValues(s) {
+  return { [TTS_KEYS.locale]: s.locale || "", [TTS_KEYS.voice]: s.voice || "", [TTS_KEYS.pitch]: String(s.pitch | 0),
+    [TTS_KEYS.rate]: String(s.rate | 0), [TTS_KEYS.bandpass]: s.bandpass ? "true" : "false", [TTS_KEYS.lo]: String(s.lo | 0),
+    [TTS_KEYS.hi]: String(s.hi | 0) };
+}
+
 function ttsSettingsToDoc(ext, s) {
-  ext.set("global", TTS_KEYS.locale, s.locale || "");
-  ext.set("global", TTS_KEYS.voice, s.voice || "");
-  ext.set("global", TTS_KEYS.pitch, String(s.pitch | 0));
-  ext.set("global", TTS_KEYS.rate, String(s.rate | 0));
-  ext.set("global", TTS_KEYS.bandpass, s.bandpass ? "true" : "false");
-  ext.set("global", TTS_KEYS.lo, String(s.lo | 0));
-  ext.set("global", TTS_KEYS.hi, String(s.hi | 0));
+  for (const [k, v] of Object.entries(ttsSettingsValues(s))) ext.set("global", k, v);
 }
 
 /* ---- the service ---- */
@@ -184,7 +185,15 @@ async function downloadPack(id, onProgress) {
   return out;
 }
 
-/* Publishes a pack for everyone: the description, then the image in parts; returns the pack's id. */
+/* The work behind a device's pack (voicepackWorkKeys): {id, version, lang, name, voice, locale, settings, clips, built,
+ * parent, pack}. A new one comes with its owner key {id, key, version}; only that key overwrites it. */
+const fetchWork = (id) => serviceJson(`/v1/works/${id}`);
+const jsonInit = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const createWork = (work) => serviceJson("/v1/works", jsonInit("POST", work));
+const updateWork = (id, key, work) => serviceJson(`/v1/works/${id}`, jsonInit("PUT", { ...work, key }));
+
+/* Publishes a pack for everyone: the description, then the image in parts; returns the pack's id. With desc.work and
+ * that work's owner key (desc.key) a pack shared from the work before is replaced in place. */
 async function sharePack(desc, image, onProgress) {
   const made = await serviceJson("/v1/packs", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...desc, size: image.length, consent: true }) });

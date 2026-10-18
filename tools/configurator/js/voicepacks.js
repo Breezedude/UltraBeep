@@ -16,9 +16,52 @@ const PACK_DRAFT = "cfg.packDraft";   /* before: the draft of one pack only, {id
 /* The pack being made in Custom voicepack, per voice pack id: the shared pack it started from, its
  * changed texts {clip name: spoken text}, the lines spoken in another language than the pack's
  * {clip name: language} ("gps_ok": "en") and the takes chosen for lines {clip name: variant 1..99}.
- * Kept in this browser for every pack apart; a file keeps them anywhere (voicepackWorkFile). */
+ * Kept in this browser for every pack apart; a file keeps them anywhere (voicepackWorkFile).
+ * work: "<id>@<version>" of the device's pack work the draft was taken from (voicepackWorkDraft); fork: the draft
+ * started from a shared pack instead - the next change on the device makes a work of one's own from it, its parent
+ * the shared pack's work ("new" when that pack has none). */
 const cleanDraft = (d = {}) => ({ base: d.base || null, baseName: d.baseName || "", overrides: d.overrides || {},
-  languages: d.languages || {}, variants: d.variants || {} });
+  languages: d.languages || {}, variants: d.variants || {}, work: d.work || "", fork: d.fork || "" });
+
+/*
+ * Custom voicepack starts from a shared pack: its texts, languages and takes - those of its work when it has one
+ * (every clip as it was made) - and its voice and sound. The next change on the device starts a work of one's own.
+ */
+async function startPackFrom(packId, p) {
+  const full = await fetchPack(p.id);
+  let texts = { overrides: full.overrides, languages: full.languages || {}, variants: full.variants || {} };
+  let voice = full.voice, sound = full.settings, fork = "new";
+  if (full.work) {
+    try {
+      const w = await fetchWork(full.work);
+      texts = voicepackWorkDraft(w, voicepackInfo(packId).lang || "en");
+      voice = w.voice;
+      sound = w.settings;
+      fork = w.id;
+    } catch (e) { /* the pack's own description */ }
+  }
+  savePackDraft(packId, { base: p.id, baseName: full.name, ...texts, work: "", fork });
+  const s = ttsSettings();
+  Object.assign(s, sound);
+  /* a pack made elsewhere ("google:...") brings its texts and sound, not its voice */
+  if (!externalVoice(voice)) Object.assign(s, { voice, locale: "" });
+  saveTtsSettings(s);
+  state.workApplied = null;
+  return full;
+}
+
+/* A shared pack goes onto the device (download for USB, or written to the opened card): the device's configuration
+ * names its work, so Custom voicepack makes later clips like it. Not its owner: the first change makes a copy of
+ * one's own. Kept when the device's work is that one already (its owner key stays). */
+async function linkDeviceToPack(packId, p) {
+  if (!p.work || !state.ext) return;
+  const keys = voicepackWorkKeys(packId);
+  if (state.ext.get("global", keys.id) === p.work) return;
+  await storeExtGlobals({ [keys.id]: p.work, [keys.key]: "" });
+  const d = packDraft(packId);
+  savePackDraft(packId, { ...d, work: "", fork: "" });
+  state.workApplied = null;
+}
 
 function allPackDrafts() {
   let all = {};
@@ -112,27 +155,23 @@ function renderVoice() {
     if (bytes.length !== p.size) throw new Error("The download broke off; try again.");
     return bytes;
   };
+  const linkNote = (p) => (p.work ? " The device's configuration now names this pack, so Custom voicepack makes later clips like it." : "");
   const download = (p) => async (say) => {
     downloadBytes(`${packId}.ubpack`, await fetchFile(p, say));
-    say(`saved as ${packId}.ubpack. Copy it to voices/ on the SD card (over USB): the device loads it as its ${packName} pack.`);
+    await linkDeviceToPack(packId, p);
+    say(`saved as ${packId}.ubpack. Copy it to voices/ on the SD card (over USB): the device loads it as its ${packName} pack.${linkNote(p)}`);
   };
   const toCard = (p) => async (say) => {
     const bytes = await fetchFile(p, say);
     say("writing to the SD card …");
     const kept = await writePackToCard(src.dir, packId, bytes);
+    await linkDeviceToPack(packId, p);
     say(`written to voices/${packId}.ubpack${kept ? ` (the pack before is kept as voices/${packId}_orig.ubpack)` : ""}. ` +
-      "The device loads it at the next start.");
+      `The device loads it at the next start.${linkNote(p)}`);
   };
   const asStart = (p) => async (say) => {
     say("loading …");
-    const full = await fetchPack(p.id);
-    savePackDraft(packId, { base: p.id, baseName: p.name, overrides: full.overrides, languages: full.languages || {},
-      variants: full.variants || {} });
-    const s = ttsSettings();
-    Object.assign(s, full.settings);
-    /* a pack made elsewhere ("google:...") brings its texts and sound, not its voice */
-    if (!externalVoice(full.voice)) Object.assign(s, { voice: full.voice, locale: "" });
-    saveTtsSettings(s);
+    await startPackFrom(packId, p);
     state.view = "voicepack";
     render();
   };
