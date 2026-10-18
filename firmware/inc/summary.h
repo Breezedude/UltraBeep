@@ -46,5 +46,7 @@ int summary_altitude_clip(float m);
 int summary_speed_clip(float kmh);
 int summary_lift_clip(float cms);
 int summary_sink_clip(float cms);
+/* glide/glide_<tenths> of the extension clips: 0 to 5 in halves, 5 to 13 in tenths, 13 to 22 in halves, 22 to 30 whole. */
+int summary_glide_clip(float ratio);
 
 #endif

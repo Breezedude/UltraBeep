@@ -17,17 +17,16 @@
 
 typedef enum {
   ANN_ALTITUDE,     /* al/al_<m> */
-  ANN_CLIMBRATE,    /* vario_lift_<cm/s> / vario_sink_<cm/s>, averaged over 10 s */
+  ANN_CLIMBRATE,    /* [climb] vario_lift_<cm/s> / vario_sink_<cm/s>: the mean over the span (10 s unless chosen) */
   ANN_SPEED,        /* sp/sp_<km/h> */
   ANN_HEADING,      /* nav/heading nav/<n|ne|e|se|s|sw|w|nw> */
   ANN_DURATION,     /* time/duration [time/duration_<h>] time/min_<m> */
   ANN_TIME,         /* time/time time/hour_<h> time/min_<m>, local time */
-  ANN_WIND,         /* nav/wind nav/<from> sp/sp_<km/h> */
-  ANN_GLIDE,        /* [glide_ratio] <n> dot <tenth> */
+  ANN_WIND,         /* wind sp/sp_<km/h> nav/from_<dir> (without those clips: nav/wind nav/<dir> sp/sp_<km/h>) */
+  ANN_GLIDE,        /* [glide_ratio] glide/glide_<tenths> (without the series: <n> dot <tenth>), over the span (20 s) */
   ANN_BATTERY,      /* battery <n>_percent */
   ANN_TONE,         /* a signal tone on the piezo (announce_signal_names, the list's choice), no clips */
-  ANN_THERMALCLIMB, /* vario_lift_<cm/s>: mean climb since the circling began */
-  ANN_THERMALGAIN,  /* al/al_<m>: height gained since the circling began */
+  ANN_THERMALGAIN,  /* [gain|height_gain] al/al_<m>: height gained since the circling began, or over the span */
   ANN_MAXG,         /* [g_load] g/g_<tenths> (without that series: <n> dot <tenth>): peak load factor */
   ANN_BANK,         /* [bank_angle] bank/bank_<deg, steps of 5> (without them: <deg>): bank of a coordinated turn */
   ANN_MAXALTITUDE,  /* altitude_max al/al_<m> (flight summary) */
@@ -70,13 +69,32 @@ extern const char *const announce_matrix_names[MATRIX_ITEMS];
 #define ANN_SIGNALS 11
 extern const char *const announce_signal_names[ANN_SIGNALS];
 
+/*
+ * Options of a block, words after colons in the items string (`climbrate:ble:30s:climb`), stored per list
+ * entry in a byte: the low nibble the span the value covers, as an index into announce_span_s (0 = the
+ * block's own default: 10 s for climbrate, 20 s for glide, the climb phase for thermalgain), the high nibble
+ * the variant - the signal of "tone", or the word spoken before the number (announce_word_names: "climb"
+ * for climbrate, "gain" and "heightgain" for thermalgain; 0 = the number alone). Unknown words are ignored,
+ * so older firmware reads the ":ble" and speaks its usual form.
+ */
+#define ANN_SPANS 6 /* index 0: the default */
+extern const uint8_t announce_span_s[ANN_SPANS]; /* 0, 10, 15, 20, 30, 60 */
+#define ANN_WORDS 4
+extern const char *const announce_word_names[ANN_WORDS]; /* "", "climb", "gain", "heightgain" (the option words) */
+#define ANN_OPT(span, variant) ((uint8_t)((span) | ((variant) << 4)))
+#define ANN_OPT_SPAN(o)        ((unsigned)((o) & 0x0F))
+#define ANN_OPT_VARIANT(o)     ((unsigned)((o) >> 4))
+
 typedef struct {
   bool set;                  /* the items key was present (an empty value counts) */
   uint8_t count;
   uint8_t block[ANN_LIST_MAX];
   uint16_t ble_mute;         /* bit i: block i is not spoken while a phone is connected */
-  uint8_t tone;              /* the block "tone": index into announce_signal_names */
+  uint8_t opt[ANN_LIST_MAX]; /* ANN_OPT of block i */
 } announce_list_t;
+
+/* The span in seconds the block covers in this list: its option, or def_s without one (0: not in the list). */
+uint8_t announce_list_span_s(const announce_list_t *l, announce_block_t b, uint8_t def_s);
 
 typedef struct {
   announce_list_t list[ANN_TRIGGERS];
@@ -114,36 +132,38 @@ void announce_config_resolve(announce_config_t *c);
 uint16_t announce_elevation_gain(const announce_config_t *c);
 uint16_t announce_elevation_loss(const announce_config_t *c);
 
-/* What the device knows now. */
+/* What the device knows now. The arrays go by announce_span_s (index 0: the block's default span). */
 typedef struct {
   bool in_flight;
-  float alt_m;            /* GNSS-referenced barometric altitude */
-  float climb_ms;         /* averaged climb rate */
-  bool fix;               /* 3D fix */
+  float alt_m;                /* GNSS-referenced barometric altitude */
+  float climb_ms[ANN_SPANS];  /* mean climb rate over each span ([0]: 10 s) */
+  float gain_m[ANN_SPANS];    /* height gained over each span ([0] unused: the climb phase is thermal_gain_m) */
+  bool fix;                   /* 3D fix */
   float speed_kmh;
   float course_deg;
   uint32_t airtime_s;
   bool time_valid;
-  uint32_t local_s;       /* local time, seconds since midnight */
-  int battery_percent;    /* < 0: unknown */
+  uint32_t local_s;           /* local time, seconds since midnight */
+  int battery_percent;        /* < 0: unknown */
   bool wind_valid;
   float wind_kmh;
-  float wind_from_deg;    /* direction the wind comes from */
-  bool glide_valid;
-  float glide_ratio;
-  bool thermal_valid;     /* circling: the climb phase so far, or the one that just ended */
-  float thermal_climb_ms;
+  float wind_from_deg;        /* direction the wind comes from */
+  bool glide_valid[ANN_SPANS]; /* glide ratio over each span of straight flight ([0]: 20 s) */
+  float glide_ratio[ANN_SPANS];
+  bool thermal_valid;         /* circling: the climb phase so far, or the one that just ended */
   float thermal_gain_m;
-  float g_load;           /* peak load factor of the manoeuvre or the flight; <= 0: none */
+  float g_load;               /* peak load factor of the manoeuvre or the flight; <= 0: none */
   float bank_deg;
-  bool stats_valid;       /* flight summary */
+  bool stats_valid;           /* flight summary */
   float max_alt_m;
   float max_speed_kmh;
   float max_climb_ms;
-  float max_sink_ms;      /* positive */
+  float max_sink_ms;          /* positive */
   bool glide_word, g_word, bank_word; /* extension clips glide_ratio, g_load, bank_angle in the voice pack */
-  bool g_series;          /* extension clips g/g_0 ... g/g_100: the load factor as one clip per tenth */
-  bool bank_series;       /* extension clips bank/bank_0 ... bank/bank_180: the bank angle in steps of 5 degrees */
+  bool g_series;              /* extension clips g/g_0 ... g/g_100: the load factor as one clip per tenth */
+  bool bank_series;           /* extension clips bank/bank_0 ... bank/bank_180: the bank angle in steps of 5 degrees */
+  bool glide_series;          /* extension clips glide/glide_0 ... glide/glide_300: the glide ratio as one clip */
+  bool wind_words;            /* extension clips wind and nav/from_<dir>: "wind, 12 km/h, from the west" */
 } announce_input_t;
 
 #define ANN_CLIPS  4
@@ -157,7 +177,7 @@ typedef struct {
   char clip[ANN_GROUPS][ANN_CLIPS][ANN_NAME];
 } announcement_t;
 
-/* Plausible fixed values for a demo of a list (configurator play button); the word flags stay as they are. */
+/* Plausible fixed values for a demo of a list (configurator play button); the clip flags stay as they are. */
 void announce_demo_input(announce_input_t *in);
 /* Clip groups for the blocks of `l`; with ble_connected, blocks marked :ble are left out. */
 void announce_build(const announce_list_t *l, bool ble_connected, const announce_input_t *in, announcement_t *out);

@@ -163,9 +163,12 @@ Other values round to the nearest step (30 → 40, 10 → 20).
   * **Extension clips** - the clips UltraBeep says that the manufacturer's packs do not have (the
     configurator's Voice view lists them in their own table and generates and sends them as a group): `ready` and
     `wait_for_takeoff` (the launch readiness below), `press_button_to_confirm` (the pairing request),
-    `glide_ratio`, `g_load` and `bank_angle` (the announcement blocks), `thermal_exit`, the load factor
+    `glide_ratio`, `g_load` and `bank_angle` (the announcement blocks), `thermal_exit`, the words
+    `wind`, `climb`, `gain` and `height_gain` (0.58, the announcement blocks' options), the load factor
     series `g/g_0` … `g/g_100` (0.0 to 10.0 g in tenths, one clip each: "2.3 G", since 0.52), the bank
-    angle series `bank/bank_0` … `bank/bank_180` (steps of 5 degrees: "60 Grad", since 0.53), and the
+    angle series `bank/bank_0` … `bank/bank_180` (steps of 5 degrees: "60 Grad", since 0.53), the glide
+    ratio series `glide/glide_0` … `glide/glide_300` (117 clips, "8.7", 0.58), the wind directions
+    `nav/from_n` … `nav/from_nw` ("from the west", 0.58), and the
     profiles' voice lines (`identity_voiceclip_string`). Everything else the firmware says is in the stock packs.
 
 ## If found
@@ -186,7 +189,7 @@ profile view). The lists live per profile in `config_ext.ultrabip` (`[profile1]`
 
 | Key | Meaning |
 |---|---|
-| `announce_<trigger>_items_string` | The blocks in the order spoken, comma separated; a block may carry options after colons: `:ble` (not spoken while a phone is connected over Bluetooth) and, for `tone`, the name of its signal tone (below; without one the first). Example: `tone:trill,thermalclimb,altitude:ble`. An empty value means nothing. |
+| `announce_<trigger>_items_string` | The blocks in the order spoken, comma separated; a block may carry options after colons, in any order: `:ble` (not spoken while a phone is connected over Bluetooth), for `tone` the name of its signal tone (below; without one the first), for `climbrate`, `glide` and `thermalgain` the span the value covers (`10s`, `15s`, `20s`, `30s`, `60s`; below) and for `climbrate` and `thermalgain` a word spoken before the number (`climb`; `gain`, `heightgain`). Example: `tone:trill,thermalgain:60s:gain,climbrate:ble:30s`. Words the firmware does not know are ignored (0.58). An empty value means nothing. |
 | *(missing key)* | The list is derived from the stock keys BipLink writes (below), or the trigger's default. |
 
 Triggers, their enable key and settings. Keys without a prefix note are extension keys; the stock
@@ -200,14 +203,16 @@ keys stay where they are (profiles 1–3 in `config.ultrabip`), so BipLink chang
 | `elevation` | after `announce_elevation_gain_int` m climbed or `announce_elevation_loss_int` m lost since the last one (0 = off; default: `voiceauto_altitudetrigger_int`) | `announce_elevation_enable_bool` (default: `voiceauto_enable_bool`) | the two keys |
 | `thermalexit` | a climb phase ends (30 s mean below 0.2 m/s or circling stops) after at least `announce_thermalexit_mintime_int` s (60) and `announce_thermalexit_mingain_int` m (50) | `announce_thermalexit_enable_bool` (true) | the two keys |
 | `thermaling` | every `announce_thermalclimb_int` s (20) while circling with a mean climb (turns without climb stay silent) | `announce_thermaling_enable_bool` (false) | the key |
-| `glide` | after `announce_glide_straighttime_int` s (30) of straight flight; with `announce_glidemingain_int` m (100, 0 = always) only on the glide after a thermal of that gain; `announce_glide_repeat_int` min (0 = once per glide) | `announce_glide_enable_bool` (true) | the three keys |
+| `glide` | after `announce_glide_straighttime_int` s (30) of straight flight, once the glide ratio over the `glide` block's span is there; with `announce_glidemingain_int` m (100, 0 = always) only on the glide after a thermal of that gain; `announce_glide_repeat_int` min (0 = once per glide) | `announce_glide_enable_bool` (true) | the three keys |
 | `wind` | circling ends with a wind estimate that is new or changed by 5 km/h or 45° | `announce_wind_enable_bool` (false) | – |
 | `wingover` | after a wingover (turns that change direction: at least 0.5 s faster than 40°/s, the other way within 2.5 s, 1.8 g or more in the swings; swings that run into a spiral are logged, not spoken) or a spiral (1.6 g and 50°/s for 4 s), 2 s after the load is back below 1.3 g (firmware/inc/maneuver.h, 0.54; the measured bank 0.55) | `announce_wingover_enable_bool` (true) | – |
 
-Blocks: `altitude`, `climbrate` (10 s mean), `speed`, `heading`, `duration` (flight time), `time`
-(local time of day), `wind`, `glide` (glide ratio), `battery`, `tone` (a short signal on the
-piezo, no voice), `thermalclimb` (mean climb since the circling began), `thermalgain` (height
-gained since then), `maxg` (peak load factor of the flight or the manoeuvre: the one clip `g/g_23` when
+Blocks: `altitude`, `climbrate` (the mean over its span, 10 s unless chosen: `climbrate:30s`; with the
+word `climb` the extension clip "climb" comes first), `speed`, `heading`, `duration` (flight time), `time`
+(local time of day), `wind`, `glide` (glide ratio over its span, 20 s unless chosen), `battery`, `tone` (a short signal on the
+piezo, no voice), `thermalgain` (height gained since the circling began; with a span `30s` or `60s` the
+height gained over that time of any flight, a loss as a negative number; with `gain` or `heightgain` the extension clip
+"gain" or "height_gain" comes first), `maxg` (peak load factor of the flight or the manoeuvre: the one clip `g/g_23` when
 the device has that series, else "2 dot 3" from single numbers), `bank`
 (bank angle in degrees, a size without a side: after a wingover the peak of the pilot's measured tilt
 against the true vertical, 0 to 180, once the device has learned how it sits on the pilot (firmware/inc/tilt.h,
@@ -223,7 +228,7 @@ The derived list while `announce_<trigger>_items_string` is missing:
 * `tap`, `auto`, `elevation`: the stock items in the stock order (`altitude`, `climbrate`,
   `speed`, `heading`, `duration`, `time`) whose stock key `voicetap_<item>_bool` /
   `voiceauto_<item>_bool` is true; every block muted with a phone connected except `climbrate`.
-* `thermalexit`: `tone` (on); `thermaling`: `thermalclimb` (off); `glide`: `glide` (on); `wind`:
+* `thermalexit`: `tone` (on); `thermaling`: `thermalgain` (off); `glide`: `glide` (on); `wind`:
   `wind` (off); `wingover`: `maxg`, `bank` (on).
 
 Details of the triggers (firmware/src/app/announce.c):
@@ -238,11 +243,18 @@ Details of the triggers (firmware/src/app/announce.c):
   0.57 then still reads `:ble` and plays its old falling three-tone signal.
 * `auto` and `elevation` fire at most every 30 s each; `elevation` measures from the altitude of
   its last announcement (the takeoff at first).
-* `thermalexit` speaks the climb phase that ended (`thermalclimb`, `thermalgain` of that phase);
-  `thermaling` the phase so far.
+* `thermalexit` speaks the climb phase that ended (`thermalgain` of that phase); `thermaling` the
+  phase so far. The block `thermalclimb` of 0.24 to 0.57 (the mean climb of the phase) is gone: a list
+  that still names it skips it.
 * `glide` reports after `announce_glide_straighttime_int` s of straight flight, also right after
-  the takeoff when `announce_glidemingain_int` is 0; the glide ratio itself needs 20 s of straight
-  flight with a fix and at least 0.3 m/s sink, else that block is left out and the others are said.
+  the takeoff when `announce_glidemingain_int` is 0; the glide ratio itself needs its span (20 s, or
+  `glide:60s`) of straight flight with a fix (the track turning less than 90° in all, every second with
+  a fix and faster than 7 km/h), begun after the circling ended, and at least 0.3 m/s of sink; until
+  then the report waits, and in a list spoken for another reason that block is left out and the others
+  are said.
+* `climbrate` averages the fused climb rate of the last 10, 15, 20 or 30 s (`climbrate:15s`); the
+  `thermalgain` spans 30 and 60 s sum the same values. The spans a block may name are 10, 15, 20, 30
+  and 60 s; others are ignored.
 * `wingover` speaks 2 s after the manoeuvre ended; `maxg` and `bank` are its values, in the
   summary `maxg` is the peak of the flight. Extension clips `g_load` and `bank_angle` (like
   `glide_ratio`) are said first when the voice pack has them. `maxg` takes the series `g/g_<tenths>`
@@ -250,7 +262,9 @@ Details of the triggers (firmware/src/app/announce.c):
   `bank` the series `bank/bank_<deg>` when `bank/bank_5` and `bank/bank_180` are there (a wingover's
   measured tilt goes beyond 90; the load of a coordinated turn gives less than 90).
   The device looks the extension clips up again when the voice pack changes or a clip in
-  `voices/custom` is sent or deleted over Bluetooth (0.52).
+  `voices/custom` is sent or deleted over Bluetooth (0.52). The glide ratio series counts when `glide/glide_50`
+  and `glide/glide_220` are there, the wind words when `wind`, `nav/from_n` and `nav/from_nw` are. The words
+  `climb`, `gain` and `height_gain` are spoken when a list asks for them; a missing clip is skipped.
 * A list holds up to 10 blocks, each once.
 
 ### Details
@@ -262,9 +276,12 @@ Details of the triggers (firmware/src/app/announce.c):
 * **Circling** means at least one full turn of the ground track (or of the gyro's turn rate)
   within 30 s; it ends below 60° in 10 s.
 * **Wind** comes from a circle fit of the ground velocity over the last turn. It is accepted for an
-  airspeed of 20–60 km/h. Spoken as "wind", the direction it comes from, and the speed.
-* **Glide ratio** is spoken as "8 dot 7"; with an extension clip `glide_ratio` in the voice pack,
-  that word comes first.
+  airspeed of 20–60 km/h. Spoken as "wind, 12 km/h, from the west" with the extension clips `wind` and
+  `nav/from_<n|ne|e|se|s|sw|w|nw>` (0.58); without them in the stock's form: "wind direction", the
+  direction, the speed. Below 2 km/h the direction is left out.
+* **Glide ratio** is spoken as one clip `glide/glide_<tenths>` when the voice pack has that series
+  (0.58: 0 to 5 in halves, 5 to 13 in tenths, 13 to 22 in halves, 22 to 30 whole; beyond 30 the last),
+  else as "8 dot 7"; with an extension clip `glide_ratio` in the voice pack, that word comes first.
 * **Time of day** (also the IGC header's time zone and the file dates): with `system_timezoneauto_bool`
   the offset in force by the stock's switch table `global_timechanges_longstring` in `config.ultrabip`
   ("yymmdd offset," entries, written by the BipLink app for the phone's time zone and by the configurator

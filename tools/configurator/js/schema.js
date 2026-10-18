@@ -316,20 +316,29 @@ const SENSOR_FIELDS = [
  */
 const BLOCKS = [
   { id: "altitude", label: "Altitude", ble: true, help: "Altitude above sea level (barometric, referenced to the GPS)." },
-  { id: "climbrate", label: "Climb rate", ble: false, help: "Mean climb or sink of the last 10 s." },
+  { id: "climbrate", label: "Climb rate", ble: false,
+    help: "Mean climb or sink over the time chosen next to the name (10 s unless changed), as the number alone " +
+      "or after \"Climb:\" (the extension clip climb, Voice view)." },
   { id: "speed", label: "Ground speed", ble: true, help: "GPS speed over ground in km/h." },
   { id: "heading", label: "Heading", ble: true, help: "Course over ground as a compass direction (N, NE, E ...)." },
   { id: "duration", label: "Flight time", ble: true, help: "Time since the takeoff." },
   { id: "time", label: "Time of day", ble: true, help: "Local time (System → Language and time)." },
   { id: "wind", label: "Wind", ble: true,
-    help: "The direction it comes from and the speed, estimated from circling. Left out before the first estimate." },
-  { id: "glide", label: "Glide ratio", ble: true, help: "Distance over ground per height lost, e.g. \"8 dot 7\"." },
+    help: "\"Wind: 12 km/h, from the west\" - the speed and the direction it comes from, estimated from circling; " +
+      "left out before the first estimate. Needs the extension clips wind and nav/from_… (Voice view); without " +
+      "them the stock form \"wind direction, west, 12 km/h\"." },
+  { id: "glide", label: "Glide ratio", ble: true,
+    help: "Distance over ground per height lost, over the time chosen next to the name (20 s unless changed, " +
+      "straight flight with a fix). \"8.7\" as one clip with the extension series glide/glide_… (Voice view: " +
+      "in tenths from 5 to 13, in halves below and up to 22, whole to 30), else \"8 dot 7\"." },
   { id: "battery", label: "Battery", ble: false, help: "Charge in percent." },
   { id: "tone", label: "Signal tone", ble: false,
     help: "A short signal on the piezo, no voice; choose it next to the name (▶ plays it: on the device when " +
       "connected, else here as an approximation). Put it first to draw attention to what follows." },
-  { id: "thermalclimb", label: "Thermal: mean climb", ble: false, help: "Mean climb since the circling began." },
-  { id: "thermalgain", label: "Thermal: height gained", ble: false, help: "Height gained since the circling began." },
+  { id: "thermalgain", label: "Thermal: height gained", ble: false,
+    help: "Height gained since the circling began, or over the last minute or 30 s of any flight (the choice next " +
+      "to the name; a loss is said as a negative number), as the number alone or after \"Gain:\" or " +
+      "\"Height gain:\" (the extension clips gain and height_gain, Voice view)." },
   { id: "maxaltitude", label: "Maximum altitude", ble: true, help: "Highest altitude of the flight." },
   { id: "maxspeed", label: "Maximum speed", ble: true, help: "Highest ground speed of the flight." },
   { id: "maxclimb", label: "Maximum climb and sink", ble: true, help: "Strongest climb and sink (5 s means) of the flight." },
@@ -360,6 +369,35 @@ const SIGNAL_TONES = [
   { id: "low_chirp_up", label: "Chirp up, low", notes: [[566, 25], [680, 25], [800, 25], [950, 25], [1131, 25], [1270, 25]] },
 ];
 const SIGNAL_BY_ID = Object.fromEntries(SIGNAL_TONES.map((s) => [s.id, s]));
+
+/*
+ * The options a block carries after its name and ":ble" in the items string (firmware 0.58, announce.c
+ * parse_options): the span "<n>s" its value covers (announce_span_s) and the word spoken before the number
+ * (announce_word_names); for "tone" its signal. Per option: key, label (the select's name), def (the firmware's
+ * own default, not written) and choices [[value, label]]; play: ▶ next to it. The firmware ignores words it
+ * does not know, and firmware before 0.58 still reads the ":ble".
+ */
+const BLOCK_OPTIONS = {
+  climbrate: [
+    { key: "span", label: "Averaged over", def: "10s",
+      choices: [["10s", "last 10 s"], ["15s", "last 15 s"], ["20s", "last 20 s"], ["30s", "last 30 s"]] },
+    { key: "word", label: "Spoken as", def: "", choices: [["", "number only"], ["climb", "“Climb:” + number"]] },
+  ],
+  thermalgain: [
+    { key: "span", label: "Height gained", def: "",
+      choices: [["", "since the thermal began"], ["60s", "in the last minute"], ["30s", "in the last 30 s"]] },
+    { key: "word", label: "Spoken as", def: "",
+      choices: [["", "number only"], ["gain", "“Gain:” + number"], ["heightgain", "“Height gain:” + number"]] },
+  ],
+  glide: [
+    { key: "span", label: "Averaged over", def: "20s",
+      choices: [["15s", "over 15 s"], ["20s", "over 20 s"], ["30s", "over 30 s"], ["60s", "over 60 s"]] },
+  ],
+  tone: [
+    { key: "sound", label: "Which signal tone", def: SIGNAL_TONES[0].id, play: true,
+      choices: SIGNAL_TONES.map((s, k) => [s.id, k ? s.label : `${s.label} (default)`]) },
+  ],
+};
 
 /* The stock matrix items in the stock order, then the 0.16 additions: for the derived lists. */
 const MATRIX_ITEMS = ["altitude", "climbrate", "speed", "heading", "duration", "time", "wind", "glide", "battery"];
@@ -427,7 +465,7 @@ const TRIGGERS = [
       { key: "announce_thermalexit_mingain_int", label: "... and a gain of at least", unit: "m", type: "int", min: 0, max: 2000, ext: true, def: "50",
         help: "Weaker climb phases do not count as a thermal." },
     ],
-    pool: ["tone", "thermalclimb", "thermalgain", "altitude", "wind", "speed", "heading", "duration", "time", "battery"],
+    pool: ["tone", "thermalgain", "climbrate", "altitude", "wind", "speed", "heading", "duration", "time", "battery"],
     legacy: { kind: "event", item: "thermalexit", def: true, items: ["tone"] } },
   { id: "thermaling", label: "While thermaling", when: "every few seconds while you circle in lift",
     help: "While you circle in a thermal - at least one full turn within 30 s and a mean climb since the " +
@@ -436,8 +474,8 @@ const TRIGGERS = [
     settings: [
       { key: "announce_thermalclimb_int", label: "Every", unit: "s", type: "int", min: 5, max: 300, ext: true, def: "20" },
     ],
-    pool: ["thermalclimb", "thermalgain", "climbrate", "altitude", "wind", "duration", "time", "battery", "tone"],
-    legacy: { kind: "event", item: "climbrate", def: false, items: ["thermalclimb"] } },
+    pool: ["thermalgain", "climbrate", "altitude", "wind", "duration", "time", "battery", "tone"],
+    legacy: { kind: "event", item: "climbrate", def: false, items: ["thermalgain"] } },
   { id: "glide", label: "Straight glide", when: "after flying straight for a while",
     help: "Once you have flown straight (no circling) for the time below. With \"only after a climb\" it " +
       "waits for the glide after a thermal, e.g. to hear the glide ratio towards the next one.",
@@ -586,5 +624,6 @@ const STOCK_TONES = [
 const TONE_POINTS = 8;
 
 if (typeof module !== "undefined") {
-  module.exports = { TIME_ZONES, dstTable, dstTableStandardOffset, STOCK_TONES, TONE_POINTS, SIGNAL_TONES, SIGNAL_BY_ID };
+  module.exports = { TIME_ZONES, dstTable, dstTableStandardOffset, STOCK_TONES, TONE_POINTS, SIGNAL_TONES, SIGNAL_BY_ID,
+    BLOCKS, BLOCK_OPTIONS, TRIGGERS };
 }

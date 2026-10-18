@@ -14,7 +14,7 @@
 
 const char *const announce_block_names[ANN_BLOCKS] = {
   "altitude", "climbrate", "speed", "heading", "duration", "time", "wind", "glide", "battery",
-  "tone", "thermalclimb", "thermalgain", "maxg", "bank", "maxaltitude", "maxspeed", "maxclimb",
+  "tone", "thermalgain", "maxg", "bank", "maxaltitude", "maxspeed", "maxclimb",
 };
 
 const char *const announce_trigger_names[ANN_TRIGGERS] = {
@@ -29,6 +29,16 @@ const char *const announce_signal_names[ANN_SIGNALS] = {
   "tritone_up", "octave_leap", "bi_dup_twice", "tick_tock", "chirp_up", "trill",
   "low_octave", "low_bi_dup_twice", "low_trill", "tock_tock", "low_chirp_up",
 };
+_Static_assert(ANN_SIGNALS <= 15, "the signal goes into the variant nibble of announce_list_t.opt");
+
+/* the option words "<n>s": the spans (configurator schema.js BLOCK_OPTIONS lists the same) */
+const uint8_t announce_span_s[ANN_SPANS] = {0, 10, 15, 20, 30, 60};
+/* the option words of the word before the number, and the clips they stand for */
+const char *const announce_word_names[ANN_WORDS] = {"", "climb", "gain", "heightgain"};
+static const char *const word_clips[ANN_WORDS] = {"", "climb", "gain", "height_gain"};
+
+#define SPAN_CLIMB_DEFAULT 1 /* 10 s: the stock's climb rate in announcements */
+#define SPAN_GLIDE_DEFAULT 3 /* 20 s */
 
 /* Blocks that stay silent while a phone is connected, when nothing else is said (configurator BLOCKS). */
 static bool block_ble_default(announce_block_t b)
@@ -37,7 +47,6 @@ static bool block_ble_default(announce_block_t b)
   case ANN_CLIMBRATE:
   case ANN_BATTERY:
   case ANN_TONE:
-  case ANN_THERMALCLIMB:
   case ANN_THERMALGAIN:
     return false;
   default:
@@ -75,7 +84,7 @@ void announce_config_defaults(announce_config_t *c)
 }
 
 /* False when the list is full or has the block already. */
-static bool list_add(announce_list_t *l, announce_block_t b, bool ble)
+static bool list_add(announce_list_t *l, announce_block_t b, bool ble, uint8_t opt)
 {
   if (l->count >= ANN_LIST_MAX) {
     return false;
@@ -88,12 +97,21 @@ static bool list_add(announce_list_t *l, announce_block_t b, bool ble)
   if (ble) {
     l->ble_mute |= (uint16_t)(1U << l->count);
   }
+  l->opt[l->count] = opt;
   l->block[l->count++] = (uint8_t)b;
   return true;
 }
 
-/* The words after the block name, each after a ':' ("tone:ble:trill"): "ble", or a signal tone's name. */
-static void parse_options(const char *opt, const char *end, bool *ble, int *signal)
+static bool word_is(const char *s, size_t n, const char *word)
+{
+  return strlen(word) == n && strncmp(word, s, n) == 0;
+}
+
+/*
+ * The words after the block name, each after a ':' ("climbrate:ble:30s:climb"): "ble", a span "<n>s", a
+ * signal tone's name (the variant of "tone") or a word before the number (the variant of the other blocks).
+ */
+static void parse_options(const char *opt, const char *end, bool *ble, unsigned *span, unsigned *variant)
 {
   while (opt && opt < end) {
     const char *s = opt + 1;
@@ -106,12 +124,30 @@ static void parse_options(const char *opt, const char *end, bool *ble, int *sign
     while (n && s[n - 1] == ' ') {
       n--;
     }
-    if (n == 3 && strncmp(s, "ble", 3) == 0) {
+    if (word_is(s, n, "ble")) {
       *ble = true;
     }
-    for (int i = 0; i < ANN_SIGNALS; i++) {
-      if (strlen(announce_signal_names[i]) == n && strncmp(announce_signal_names[i], s, n) == 0) {
-        *signal = i;
+    for (unsigned i = 0; i < ANN_SIGNALS; i++) {
+      if (word_is(s, n, announce_signal_names[i])) {
+        *variant = i;
+      }
+    }
+    for (unsigned i = 1; i < ANN_WORDS; i++) {
+      if (word_is(s, n, announce_word_names[i])) {
+        *variant = i;
+      }
+    }
+    if (n >= 3 && n <= 4 && s[n - 1] == 's') {
+      unsigned sec = 0;
+      bool digits = true;
+      for (size_t k = 0; k + 1 < n; k++) {
+        digits = digits && s[k] >= '0' && s[k] <= '9';
+        sec = sec * 10U + (unsigned)(s[k] - '0');
+      }
+      for (unsigned i = 1; digits && i < ANN_SPANS; i++) {
+        if (announce_span_s[i] == sec) {
+          *span = i;
+        }
       }
     }
     opt = e;
@@ -137,18 +173,27 @@ void announce_list_parse(announce_list_t *l, const char *text)
       name_len--;
     }
     bool ble = false;
-    int signal = 0;
-    parse_options(opt, end, &ble, &signal);
+    unsigned span = 0, variant = 0;
+    parse_options(opt, end, &ble, &span, &variant);
     for (int b = 0; b < ANN_BLOCKS; b++) {
-      if (strlen(announce_block_names[b]) == name_len && strncmp(announce_block_names[b], p, name_len) == 0) {
-        if (list_add(l, (announce_block_t)b, ble) && b == ANN_TONE) {
-          l->tone = (uint8_t)signal;
-        }
+      if (word_is(p, name_len, announce_block_names[b])) {
+        list_add(l, (announce_block_t)b, ble, ANN_OPT(span, variant));
         break;
       }
     }
     p = end;
   }
+}
+
+uint8_t announce_list_span_s(const announce_list_t *l, announce_block_t b, uint8_t def_s)
+{
+  for (unsigned i = 0; i < l->count; i++) {
+    if (l->block[i] == b) {
+      unsigned span = ANN_OPT_SPAN(l->opt[i]);
+      return span && span < ANN_SPANS ? announce_span_s[span] : def_s;
+    }
+  }
+  return 0;
 }
 
 /* The stock items in the stock order, as the configurator derives the lists. */
@@ -159,7 +204,7 @@ static void list_from_matrix(announce_list_t *l, const bool items[MATRIX_ITEMS])
   memset(l, 0, sizeof(*l));
   for (int i = 0; i < MATRIX_ITEMS; i++) {
     if (items[i]) {
-      list_add(l, (announce_block_t)block_of[i], block_ble_default((announce_block_t)block_of[i]));
+      list_add(l, (announce_block_t)block_of[i], block_ble_default((announce_block_t)block_of[i]), 0);
     }
   }
 }
@@ -167,7 +212,7 @@ static void list_from_matrix(announce_list_t *l, const bool items[MATRIX_ITEMS])
 static void list_single(announce_list_t *l, announce_block_t b, bool ble)
 {
   memset(l, 0, sizeof(*l));
-  list_add(l, b, ble);
+  list_add(l, b, ble, 0);
 }
 
 void announce_config_resolve(announce_config_t *c)
@@ -178,7 +223,7 @@ void announce_config_resolve(announce_config_t *c)
     memset(&l[TRIG_SUMMARY], 0, sizeof(l[0]));
     for (int i = 0; i < 4; i++) {
       if (c->summary_item[i]) {
-        list_add(&l[TRIG_SUMMARY], (announce_block_t)blocks[i], block_ble_default((announce_block_t)blocks[i]));
+        list_add(&l[TRIG_SUMMARY], (announce_block_t)blocks[i], block_ble_default((announce_block_t)blocks[i]), 0);
       }
     }
   }
@@ -204,7 +249,7 @@ void announce_config_resolve(announce_config_t *c)
     c->enable[TRIG_THERMALEXIT] = true;
   }
   if (!l[TRIG_THERMALING].set) {
-    list_single(&l[TRIG_THERMALING], ANN_THERMALCLIMB, false);
+    list_single(&l[TRIG_THERMALING], ANN_THERMALGAIN, false);
   }
   if (!c->enable_set[TRIG_THERMALING]) {
     c->enable[TRIG_THERMALING] = false;
@@ -223,8 +268,8 @@ void announce_config_resolve(announce_config_t *c)
   }
   if (!l[TRIG_WINGOVER].set) {
     memset(&l[TRIG_WINGOVER], 0, sizeof(l[0]));
-    list_add(&l[TRIG_WINGOVER], ANN_MAXG, true);
-    list_add(&l[TRIG_WINGOVER], ANN_BANK, true);
+    list_add(&l[TRIG_WINGOVER], ANN_MAXG, true, 0);
+    list_add(&l[TRIG_WINGOVER], ANN_BANK, true, 0);
   }
   if (!c->enable_set[TRIG_WINGOVER]) {
     c->enable[TRIG_WINGOVER] = true;
@@ -278,9 +323,20 @@ static void climb_clip(announcement_t *out, unsigned n, float climb_ms)
   }
 }
 
-static bool build_block(announce_block_t block, const announce_input_t *in, announcement_t *out)
+/* The word before the number, when the list chose one that belongs to the block. */
+static unsigned word_before(announcement_t *out, unsigned n, unsigned variant, unsigned first, unsigned last)
+{
+  if (variant >= first && variant <= last) {
+    word(out, n++, word_clips[variant]);
+  }
+  return n;
+}
+
+static bool build_block(announce_block_t block, uint8_t opt, const announce_input_t *in, announcement_t *out)
 {
   unsigned n = 0;
+  unsigned span = ANN_OPT_SPAN(opt) < ANN_SPANS ? ANN_OPT_SPAN(opt) : 0;
+  unsigned variant = ANN_OPT_VARIANT(opt);
   if (out->groups >= ANN_GROUPS) {
     return false;
   }
@@ -289,7 +345,8 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
     put(out, n++, "al/al_%d", summary_altitude_clip(in->alt_m));
     break;
   case ANN_CLIMBRATE:
-    climb_clip(out, n++, in->climb_ms);
+    n = word_before(out, n, variant, 1, 1); /* "climb" */
+    climb_clip(out, n++, in->climb_ms[span ? span : SPAN_CLIMB_DEFAULT]);
     break;
   case ANN_SPEED:
     if (!in->fix) {
@@ -308,21 +365,36 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
     if (!in->wind_valid) {
       return false;
     }
-    word(out, n++, "nav/wind");
+    if (in->wind_words) {
+      /* "wind, 12 km/h, from the west"; a calm wind has no direction worth saying */
+      word(out, n++, "wind");
+      put(out, n++, "sp/sp_%d", summary_speed_clip(in->wind_kmh));
+      if (in->wind_kmh >= 2.0f) {
+        snprintf(out->clip[out->groups][n++], ANN_NAME, "nav/from_%s", direction(in->wind_from_deg));
+      }
+      break;
+    }
+    word(out, n++, "nav/wind"); /* the stock's "wind direction" */
     if (in->wind_kmh >= 2.0f) {
       snprintf(out->clip[out->groups][n++], ANN_NAME, "nav/%s", direction(in->wind_from_deg));
     }
     put(out, n++, "sp/sp_%d", summary_speed_clip(in->wind_kmh));
     break;
-  case ANN_GLIDE:
-    if (!in->glide_valid) {
+  case ANN_GLIDE: {
+    unsigned k = span ? span : SPAN_GLIDE_DEFAULT;
+    if (!in->glide_valid[k]) {
       return false;
     }
     if (in->glide_word) {
       word(out, n++, "glide_ratio");
     }
-    n = tenths_clips(out, n, (int)(in->glide_ratio * 10.0f + 0.5f));
+    if (in->glide_series) {
+      put(out, n++, "glide/glide_%d", summary_glide_clip(in->glide_ratio[k])); /* "8.7" in one go */
+    } else {
+      n = tenths_clips(out, n, (int)(in->glide_ratio[k] * 10.0f + 0.5f));
+    }
     break;
+  }
   case ANN_DURATION: {
     if (!in->in_flight && !in->stats_valid) {
       return false;
@@ -358,18 +430,16 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
   case ANN_TONE:
     out->count[out->groups++] = 0; /* the melody, played by the caller */
     return true;
-  case ANN_THERMALCLIMB:
-    if (!in->thermal_valid) {
+  case ANN_THERMALGAIN: {
+    /* the climb phase (while circling, or the one that just ended), or the last 30 or 60 s of any flight */
+    float gain = span ? in->gain_m[span] : in->thermal_gain_m;
+    if (span ? !in->in_flight : !in->thermal_valid) {
       return false;
     }
-    climb_clip(out, n++, in->thermal_climb_ms);
+    n = word_before(out, n, variant, 2, 3); /* "gain", "height_gain" */
+    put(out, n++, "al/al_%d", summary_altitude_clip(gain));
     break;
-  case ANN_THERMALGAIN:
-    if (!in->thermal_valid) {
-      return false;
-    }
-    put(out, n++, "al/al_%d", summary_altitude_clip(in->thermal_gain_m < 0.0f ? 0.0f : in->thermal_gain_m));
-    break;
+  }
   case ANN_MAXG: {
     if (in->g_load <= 0.0f) {
       return false;
@@ -438,11 +508,17 @@ static bool build_block(announce_block_t block, const announce_input_t *in, anno
 void announce_demo_input(announce_input_t *in)
 {
   bool glide_word = in->glide_word, g_word = in->g_word, bank_word = in->bank_word;
-  bool g_series = in->g_series, bank_series = in->bank_series;
+  bool g_series = in->g_series, bank_series = in->bank_series, glide_series = in->glide_series;
+  bool wind_words = in->wind_words;
   memset(in, 0, sizeof(*in));
   in->in_flight = true;
   in->alt_m = 1234.0f;
-  in->climb_ms = 1.5f;
+  for (unsigned k = 0; k < ANN_SPANS; k++) {
+    in->climb_ms[k] = 1.5f;
+    in->gain_m[k] = 1.5f * (float)announce_span_s[k];
+    in->glide_valid[k] = true;
+    in->glide_ratio[k] = 8.7f;
+  }
   in->fix = true;
   in->speed_kmh = 42.0f;
   in->course_deg = 95.0f; /* east */
@@ -453,10 +529,7 @@ void announce_demo_input(announce_input_t *in)
   in->wind_valid = true;
   in->wind_kmh = 12.0f;
   in->wind_from_deg = 270.0f; /* from the west */
-  in->glide_valid = true;
-  in->glide_ratio = 8.7f;
   in->thermal_valid = true;
-  in->thermal_climb_ms = 2.1f;
   in->thermal_gain_m = 350.0f;
   in->g_load = 2.3f;
   in->bank_deg = 64.0f;
@@ -470,6 +543,8 @@ void announce_demo_input(announce_input_t *in)
   in->bank_word = bank_word;
   in->g_series = g_series;
   in->bank_series = bank_series;
+  in->glide_series = glide_series;
+  in->wind_words = wind_words;
 }
 
 void announce_build(const announce_list_t *l, bool ble_connected, const announce_input_t *in, announcement_t *out)
@@ -480,8 +555,9 @@ void announce_build(const announce_list_t *l, bool ble_connected, const announce
       continue;
     }
     unsigned g = out->groups;
-    if (build_block((announce_block_t)l->block[i], in, out) && l->block[i] == ANN_TONE) {
-      out->signal[g] = l->tone < ANN_SIGNALS ? l->tone : 0U;
+    if (build_block((announce_block_t)l->block[i], l->opt[i], in, out) && l->block[i] == ANN_TONE) {
+      unsigned signal = ANN_OPT_VARIANT(l->opt[i]);
+      out->signal[g] = (uint8_t)(signal < ANN_SIGNALS ? signal : 0U);
     }
   }
 }

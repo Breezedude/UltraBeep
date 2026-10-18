@@ -690,8 +690,8 @@ static bool handle_test_command(const char *cmd)
   } else if (strncmp(cmd, "TONES ", 6) == 0 && vario_tones_parse(cmd + 6, &t)) {
     system_test_tones(&t);
   } else if (strncmp(cmd, "ANNOUNCE ", 9) == 0) {
-    char trigger[16], items[160] = "";
-    if (sscanf(cmd + 9, "%15s %159s", trigger, items) < 1) {
+    char trigger[16], items[224] = ""; /* the whole command fits VALUE_MAX */
+    if (sscanf(cmd + 9, "%15s %223s", trigger, items) < 1) {
       status_send("ERR arguments");
       return true;
     }

@@ -87,6 +87,13 @@ int summary_sink_clip(float cms)
   return nearest(cms, r, 3);
 }
 
+int summary_glide_clip(float ratio)
+{
+  /* fine where a paraglider flies, coarse below and above (configurator voicepack.js makes the same clips) */
+  static const clip_range_t r[] = {{0, 50, 5}, {50, 130, 1}, {130, 220, 5}, {220, 300, 10}};
+  return nearest(ratio * 10.0f, r, 4);
+}
+
 unsigned summary_clips(const flight_stats_t *s, const summary_items_t *items,
                        char clips[SUMMARY_GROUPS][SUMMARY_CLIPS][SUMMARY_NAME], unsigned counts[SUMMARY_GROUPS])
 {

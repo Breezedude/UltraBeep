@@ -64,6 +64,9 @@ const VOICEPACK_LANGUAGES = {
       vario_sink_off: "Sinkton deaktiviert", vz_min: "Maximales Sinken",
       /* extension clips of UltraBeep */
       glide_ratio: "Gleitzahl", g_load: "Beschleunigung", bank_angle: "Querneigung", thermal_exit: "Thermikausstieg",
+      wind: "Wind:", climb: "Steigen:", gain: "Gewinn:", height_gain: "Höhengewinn:",
+      "nav/from_n": "aus Norden", "nav/from_ne": "aus Nordosten", "nav/from_e": "aus Osten", "nav/from_se": "aus Südosten",
+      "nav/from_s": "aus Süden", "nav/from_sw": "aus Südwesten", "nav/from_w": "aus Westen", "nav/from_nw": "aus Nordwesten",
     },
   },
   en: {
@@ -113,6 +116,10 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Accelerometer", sensors_pressure: "Barometer", solar_cell: "Solar cell",
       vario_sink_off: "Sink tone disabled", vz_min: "Maximum sink",
       glide_ratio: "Glide ratio", g_load: "g-load", bank_angle: "Bank angle", thermal_exit: "Thermal exit",
+      wind: "Wind:", climb: "Climb:", gain: "Gain:", height_gain: "Height gain:",
+      "nav/from_n": "from the north", "nav/from_ne": "from the north-east", "nav/from_e": "from the east",
+      "nav/from_se": "from the south-east", "nav/from_s": "from the south", "nav/from_sw": "from the south-west",
+      "nav/from_w": "from the west", "nav/from_nw": "from the north-west",
     },
   },
   fr: {
@@ -162,6 +169,9 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Accéléromètre", sensors_pressure: "Baromètre", solar_cell: "Cellule solaire",
       vario_sink_off: "Son de descente désactivé", vz_min: "Descente maximale",
       glide_ratio: "Finesse", g_load: "Facteur de charge", bank_angle: "Inclinaison", thermal_exit: "Sortie de thermique",
+      wind: "Vent :", climb: "Montée :", gain: "Gain :", height_gain: "Gain d'altitude :",
+      "nav/from_n": "du nord", "nav/from_ne": "du nord-est", "nav/from_e": "de l'est", "nav/from_se": "du sud-est",
+      "nav/from_s": "du sud", "nav/from_sw": "du sud-ouest", "nav/from_w": "de l'ouest", "nav/from_nw": "du nord-ouest",
     },
   },
   it: {
@@ -211,6 +221,9 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Accelerometro", sensors_pressure: "Barometro", solar_cell: "Cella solare",
       vario_sink_off: "Suono di discesa disattivato", vz_min: "Discesa massima",
       glide_ratio: "Efficienza", g_load: "Fattore di carico", bank_angle: "Inclinazione", thermal_exit: "Uscita dalla termica",
+      wind: "Vento:", climb: "Salita:", gain: "Guadagno:", height_gain: "Guadagno di quota:",
+      "nav/from_n": "da nord", "nav/from_ne": "da nord-est", "nav/from_e": "da est", "nav/from_se": "da sud-est",
+      "nav/from_s": "da sud", "nav/from_sw": "da sud-ovest", "nav/from_w": "da ovest", "nav/from_nw": "da nord-ovest",
     },
   },
   es: {
@@ -260,6 +273,9 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Acelerómetro", sensors_pressure: "Barómetro", solar_cell: "Célula solar",
       vario_sink_off: "Tono de descenso desactivado", vz_min: "Descenso máximo",
       glide_ratio: "Planeo", g_load: "Factor de carga", bank_angle: "Inclinación", thermal_exit: "Salida de la térmica",
+      wind: "Viento:", climb: "Ascenso:", gain: "Ganancia:", height_gain: "Ganancia de altura:",
+      "nav/from_n": "del norte", "nav/from_ne": "del noreste", "nav/from_e": "del este", "nav/from_se": "del sureste",
+      "nav/from_s": "del sur", "nav/from_sw": "del suroeste", "nav/from_w": "del oeste", "nav/from_nw": "del noroeste",
     },
   },
   pt: {
@@ -309,6 +325,9 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Acelerómetro", sensors_pressure: "Barómetro", solar_cell: "Célula solar",
       vario_sink_off: "Som de descida desativado", vz_min: "Descida máxima",
       glide_ratio: "Planeio", g_load: "Fator de carga", bank_angle: "Inclinação", thermal_exit: "Saída da térmica",
+      wind: "Vento:", climb: "Subida:", gain: "Ganho:", height_gain: "Ganho de altitude:",
+      "nav/from_n": "de norte", "nav/from_ne": "de nordeste", "nav/from_e": "de este", "nav/from_se": "de sudeste",
+      "nav/from_s": "de sul", "nav/from_sw": "de sudoeste", "nav/from_w": "de oeste", "nav/from_nw": "de noroeste",
     },
   },
   nl: {
@@ -358,6 +377,10 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Versnellingssensor", sensors_pressure: "Barometer", solar_cell: "Zonnecel",
       vario_sink_off: "Daaltoon uitgeschakeld", vz_min: "Maximaal dalen",
       glide_ratio: "Glijgetal", g_load: "G-kracht", bank_angle: "Rolhoek", thermal_exit: "Thermiek verlaten",
+      wind: "Wind:", climb: "Stijgen:", gain: "Winst:", height_gain: "Hoogtewinst:",
+      "nav/from_n": "uit het noorden", "nav/from_ne": "uit het noordoosten", "nav/from_e": "uit het oosten",
+      "nav/from_se": "uit het zuidoosten", "nav/from_s": "uit het zuiden", "nav/from_sw": "uit het zuidwesten",
+      "nav/from_w": "uit het westen", "nav/from_nw": "uit het noordwesten",
     },
   },
 };
@@ -368,7 +391,7 @@ function voicepackVariant(base, label, words, units = {}) {
   return { ...b, ...units, label, words: { ...b.words, ...words } };
 }
 VOICEPACK_LANGUAGES.br = voicepackVariant("pt", "Português (Brasil)", {
-  "nav/e": "Leste", bat_charging: "Bateria carregando", contact: "Por favor, contate o suporte", takeoff: "Decolagem",
+  "nav/e": "Leste", "nav/from_e": "de leste", bat_charging: "Bateria carregando", contact: "Por favor, contate o suporte", takeoff: "Decolagem",
   loading_config: "Carregando a configuração", no_gps: "Procurando GPS", wait_for_takeoff: "Aguardando a decolagem", press_button_to_confirm: "Pressione o botão para confirmar",
   reset_hold: "Mantenha o botão pressionado para restaurar as configurações de fábrica",
   reset_wait: "Carregando as configurações de fábrica, aguarde", takeoff_off: "Detecção de decolagem desativada",
@@ -430,16 +453,29 @@ function voicepackInfo(id) {
  * Clips the manufacturer's packs do not have: UltraBeep says them for its own features, so they have to be
  * generated (single files in voices/custom, or a pack built here). Checked against the German packs of 2023
  * (972 and 983 clips). profile_custom_<n>, the own profile names, are extension clips too but live outside the
- * catalogue (the profile's voice line). So are the clips of the folders in VOICEPACK_EXTENSION_FOLDERS, which
- * the device says instead of single numbers once it has them: g/g_<tenths>, the load factor 0.0 to 10.0 g as
- * one clip each ("2.3 G" instead of "2" "dot" "3"), and bank/bank_<deg>, the bank angle 0 to 180 degrees in
- * steps of 5 ("60 Grad"; a size without a side). Taken from the load of a coordinated turn the angle stays
- * below 90; a wingover's measured tilt (firmware 0.55) goes beyond.
+ * catalogue (the profile's voice line). So are the clips named by VOICEPACK_EXTENSION_PREFIXES, which the
+ * device says instead of single numbers once it has them: g/g_<tenths>, the load factor 0.0 to 10.0 g as one
+ * clip each ("2.3 G" instead of "2" "dot" "3"); bank/bank_<deg>, the bank angle 0 to 180 degrees in steps of 5
+ * ("60 Grad"; a size without a side - taken from the load of a coordinated turn the angle stays below 90, a
+ * wingover's measured tilt (firmware 0.55) goes beyond); glide/glide_<tenths>, the glide ratio 0 to 30 ("8.7",
+ * firmware 0.58: in tenths from 5 to 13 where a paraglider flies, in halves below and up to 22, whole beyond);
+ * and nav/from_<dir>, the wind's direction as "from the west" (with the word "wind": "wind, 12 km/h, from the
+ * west" instead of the stock's "wind direction, west, 12 km/h").
  */
 const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_to_confirm", "glide_ratio", "g_load",
-  "bank_angle", "thermal_exit"]);
-const VOICEPACK_EXTENSION_FOLDERS = ["g", "bank"];
-const voicepackExtension = (name) => VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_FOLDERS.includes(name.split("/")[0]);
+  "bank_angle", "thermal_exit", "wind", "climb", "gain", "height_gain"]);
+const VOICEPACK_EXTENSION_PREFIXES = ["g/", "bank/", "glide/", "nav/from_"];
+const voicepackExtension = (name) => VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_PREFIXES.some((p) => name.startsWith(p));
+
+/* The glide ratios with a clip, in tenths (firmware summary_glide_clip rounds to these). */
+function voicepackGlideSteps() {
+  const steps = [];
+  for (let t = 0; t <= 50; t += 5) steps.push(t);
+  for (let t = 51; t <= 130; t += 1) steps.push(t);
+  for (let t = 135; t <= 220; t += 5) steps.push(t);
+  for (let t = 230; t <= 300; t += 10) steps.push(t);
+  return steps;
+}
 
 /*
  * All clips of a language: [{name, text, stock}], name as the firmware asks for it ("al/al_1230", "takeoff");
@@ -472,6 +508,8 @@ function voicepackClips(lang) {
   for (let t = 0; t <= 100; t++) add(`g/g_${t}`, L.g(t / 10));
   /* the bank angle, acos(1/load): 0.1 g is 2 degrees at 60 and more at less, so steps of 5 */
   for (let d = 0; d <= 180; d += 5) add(`bank/bank_${d}`, L.deg(d));
+  /* the glide ratio as a plain number ("8.7"), the word glide_ratio goes before it */
+  for (const t of voicepackGlideSteps()) add(`glide/glide_${t}`, decimal(t / 10));
   for (const [name, text] of Object.entries(L.words)) add(name, text);
   return out;
 }
@@ -537,6 +575,6 @@ function voicepackWorkFromFile(text) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension,
+  module.exports = { voicepackClips, voicepackText, voicepackSample, voicepackInfo, voicepackExtension, voicepackGlideSteps,
     voicepackWorkFile, voicepackWorkFromFile, VOICEPACK_LANGUAGES, VOICEPACKS, VOICEPACK_EXTENSION };
 }

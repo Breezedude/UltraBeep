@@ -226,18 +226,19 @@ static void on_double_tap(void)
 
 /* ---- announcements (announce.c): triggers with their block lists ---- */
 
-#define CLIMB_AVG_S 10U /* climb rate in announcements: mean of the last 10 s */
+#define CLIMB_HIST_S 60U /* climb rate in announcements: the mean of the last 10 to 60 s (the block's span) */
 
 static announce_auto_t ann_auto;
 static announcement_t ann_pending; /* groups still to be spoken, one sound_say (or the tone) each */
 static announcement_t ann_build;   /* the announcement being built (1 KB: kept off the stack; system task only) */
 static unsigned ann_next;
 static uint8_t ann_voice;
-static float climb_hist[CLIMB_AVG_S];
+static float climb_hist[CLIMB_HIST_S]; /* the fused climb rate, one value per second, also on the ground */
 static unsigned climb_i, climb_n;
 static thermal_t thermal;  /* circling, climb phases, wind and glide (thermal.c) */
 /* extension clips in the voice pack or voices/custom: bit 0 glide_ratio, 1 g_load, 2 bank_angle, 3 the g/g_<tenths>
- * series, 4 the bank/bank_<deg> series; -1: not looked up since the pack or the custom clips changed */
+ * series, 4 the bank/bank_<deg> series, 5 the glide/glide_<tenths> series, 6 the wind words (wind, nav/from_<dir>);
+ * -1: not looked up since the pack or the custom clips changed */
 static int ext_words = -1;
 
 void system_voice_clips_changed(void)
@@ -265,13 +266,16 @@ static void announce_input(announce_input_t *in)
   memset(in, 0, sizeof(*in));
   in->in_flight = in_flight;
   in->alt_m = s.alt_m;
-  in->climb_ms = s.vario_ms;
-  if (climb_n) {
+  /* the mean climb and the height gained over each span, from the seconds there are so far */
+  for (unsigned k = 0; k < ANN_SPANS; k++) {
+    unsigned n = announce_span_s[k] < climb_n ? announce_span_s[k] : climb_n;
     float sum = 0.0f;
-    for (unsigned i = 0; i < climb_n; i++) {
-      sum += climb_hist[i];
+    for (unsigned i = 1; i <= n; i++) {
+      sum += climb_hist[(climb_i + CLIMB_HIST_S - i) % CLIMB_HIST_S];
     }
-    in->climb_ms = sum / (float)climb_n;
+    in->climb_ms[k] = n ? sum / (float)n : s.vario_ms;
+    in->gain_m[k] = sum;
+    in->glide_valid[k] = announce_span_s[k] && thermal_glide_over(&thermal, announce_span_s[k], &in->glide_ratio[k]);
   }
   in->fix = fx.valid && fx.fix_type == 3;
   in->speed_kmh = fx.speed_ms * 3.6f;
@@ -282,9 +286,7 @@ static void announce_input(announce_input_t *in)
   uint32_t mv = system_battery_mv();
   in->battery_percent = mv ? (int)analog_battery_percent(mv) : -1;
   in->wind_valid = thermal_wind(&thermal, &in->wind_kmh, &in->wind_from_deg);
-  in->glide_valid = thermal_glide_now(&thermal, &in->glide_ratio);
   in->thermal_valid = thermal.circling;
-  in->thermal_climb_ms = thermal.thermal_ms;
   in->thermal_gain_m = s.alt_m - thermal.phase_alt;
   in->stats_valid = stats.flown;
   in->max_alt_m = stats.alt_max_m;
@@ -295,13 +297,17 @@ static void announce_input(announce_input_t *in)
     ext_words = (storage_voice_exists("glide_ratio") ? 1 : 0) | (storage_voice_exists("g_load") ? 2 : 0) |
                 (storage_voice_exists("bank_angle") ? 4 : 0) |
                 (storage_voice_exists("g/g_10") && storage_voice_exists("g/g_100") ? 8 : 0) |
-                (storage_voice_exists("bank/bank_5") && storage_voice_exists("bank/bank_180") ? 16 : 0);
+                (storage_voice_exists("bank/bank_5") && storage_voice_exists("bank/bank_180") ? 16 : 0) |
+                (storage_voice_exists("glide/glide_50") && storage_voice_exists("glide/glide_220") ? 32 : 0) |
+                (storage_voice_exists("wind") && storage_voice_exists("nav/from_n") && storage_voice_exists("nav/from_nw") ? 64 : 0);
   }
   in->glide_word = (ext_words & 1) != 0;
   in->g_word = (ext_words & 2) != 0;
   in->bank_word = (ext_words & 4) != 0;
   in->g_series = (ext_words & 8) != 0;
   in->bank_series = (ext_words & 16) != 0;
+  in->glide_series = (ext_words & 32) != 0;
+  in->wind_words = (ext_words & 64) != 0;
 }
 
 /* An announcement is being spoken; when the last one ended (the global gap, announce_mingap_int). */
@@ -419,7 +425,6 @@ static void thermal_events(unsigned ev, uint32_t utc)
   if (ev & THERMAL_EXIT) {
     rawlog_event("thermal exit %.2f %.0f", (double)thermal.exit_climb_ms, (double)thermal.exit_gain_m);
     in.thermal_valid = true;
-    in.thermal_climb_ms = thermal.exit_climb_ms;
     in.thermal_gain_m = thermal.exit_gain_m;
     announce_trigger(TRIG_THERMALEXIT, &in, false);
   }
@@ -433,9 +438,7 @@ static void thermal_events(unsigned ev, uint32_t utc)
     announce_trigger(TRIG_WIND, &in, false);
   }
   if (ev & THERMAL_GLIDE) {
-    rawlog_event("glide ratio %.1f", (double)thermal.glide);
-    in.glide_valid = true;
-    in.glide_ratio = thermal.glide;
+    rawlog_event("glide ratio %.1f", (double)thermal.glide); /* the glide block's span: announce_input has it too */
     announce_trigger(TRIG_GLIDE, &in, false);
   }
 }
@@ -444,7 +447,7 @@ static void thermal_events(unsigned ev, uint32_t utc)
  * Configurator play button: a trigger's list (unsaved) with demo values, at the ground volume. The request
  * comes from the BLE task; the system task speaks it at its next tick (the queue is its own).
  */
-static char test_trigger[16], test_items[160];
+static char test_trigger[16], test_items[224]; /* ble.c ANNOUNCE: what fits a BLE command after the trigger */
 static volatile bool test_announce_pending;
 
 void system_test_announce(const char *trigger, const char *items)
@@ -1640,14 +1643,15 @@ static void update_flight(void)
   }
 
   climb_hist[climb_i] = s.vario_ms;
-  climb_i = (climb_i + 1U) % CLIMB_AVG_S;
-  if (climb_n < CLIMB_AVG_S) {
+  climb_i = (climb_i + 1U) % CLIMB_HIST_S;
+  if (climb_n < CLIMB_HIST_S) {
     climb_n++;
   }
   if (in_flight) {
     const announce_config_t *ac = ann_config();
     thermal_config_t tc = {ac->climb_report_s, ac->glide_min_gain_m, ac->thermalexit_min_s,
-                           ac->thermalexit_min_gain_m, ac->glide_straight_s, ac->glide_repeat_min};
+                           ac->thermalexit_min_gain_m, ac->glide_straight_s, ac->glide_repeat_min,
+                           announce_list_span_s(&ac->list[TRIG_GLIDE], ANN_GLIDE, 20)};
     unsigned ev = thermal_update(&thermal, &tc, now_s, fx.valid && fx.fix_type == 3, fx.vel_e_ms, fx.vel_n_ms, s.alt_m,
                                  s.yaw_ok, s.yaw_dps);
     if (ev) {

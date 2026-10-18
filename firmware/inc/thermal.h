@@ -11,7 +11,7 @@
  * Circling: at least one full turn within 30 s, of the ground track or of
  * the heading integrated from the gyro's turn rate about the vertical, which
  * also works at low ground speed or without a fix; it ends when both turn less
- * than 90 deg in 15 s. The climb phase starts with the turn that was detected
+ * than 60 deg in 10 s. The climb phase starts with the turn that was detected
  * (30 s back).
  *
  * Events:
@@ -22,8 +22,9 @@
  *                  (thermal_t.exit_climb_ms, exit_gain_m)
  *   THERMAL_GLIDE  after glide_straight_s of straight flight, when the climb before
  *                  gained glide_min_gain_m (0: always, also right after the takeoff):
- *                  ground speed / sink rate over 20 s (thermal_t.glide); again every
- *                  glide_repeat_min, or once per glide
+ *                  ground speed / sink rate over the last glide_window_s of straight
+ *                  flight with a fix (thermal_t.glide) - so never before that much of
+ *                  it; again every glide_repeat_min, or once per glide
  *   THERMAL_WIND   when circling stops with a wind estimate that is new or
  *                  changed by more than 5 km/h or 45 deg (thermal_t.wind_*)
  *
@@ -32,7 +33,7 @@
  * circle fit is accepted for an airspeed of 20..60 km/h and a small residual.
  */
 
-#define THERMAL_WINDOW 32 /* seconds of history */
+#define THERMAL_WINDOW 64 /* seconds of history: the glide ratio and the height gained over up to 60 s */
 
 enum {
   THERMAL_CLIMB = 1,
@@ -48,6 +49,7 @@ typedef struct {
   uint16_t exit_min_gain_m;  /* announce_thermalexit_mingain_int: ... and this much height */
   uint16_t glide_straight_s; /* announce_glide_straighttime_int: straight flight before the glide report */
   uint16_t glide_repeat_min; /* announce_glide_repeat_int: again at this interval, 0 = once per glide */
+  uint16_t glide_window_s;   /* the span of the glide ratio the report speaks (the glide block's option; 20) */
 } thermal_config_t;
 
 typedef struct {
@@ -90,8 +92,10 @@ void thermal_init(thermal_t *t);
  * the second (clockwise positive) while gyro_valid, from the IMU fusion. */
 unsigned thermal_update(thermal_t *t, const thermal_config_t *c, uint32_t now_s, bool vel_valid, float ve, float vn,
                         float alt_m, bool gyro_valid, float gyro_dps);
-/* Glide ratio over the last 20 s of straight flight (false: circling, climbing or too little data). */
-bool thermal_glide_now(const thermal_t *t, float *ratio);
+/* Glide ratio over the last span_s (at most THERMAL_WINDOW - 1) of straight flight with a fix: ground speed over
+ * sink (false: circling, or it ended less than span_s ago, the track turned 90 deg or more within the span, a
+ * second without a fix or slower than 2 m/s in it, less than 0.3 m/s of sink, or a ratio beyond 60). */
+bool thermal_glide_over(const thermal_t *t, unsigned span_s, float *ratio);
 /* Wind: speed in km/h and the direction it comes from (deg); false without an estimate. */
 bool thermal_wind(const thermal_t *t, float *kmh, float *from_deg);
 

@@ -35,8 +35,9 @@ UltraBeep does what the original firmware does, with the exceptions listed below
   `IF_FOUND_PLEASE_READ.txt` in the top folder of the SD card.
 * **More announcements:** besides the usual ones, the device can speak at the thermal exit, while
   thermaling, on a straight glide, with a new wind estimate and after a wingover or spiral. Each
-  event has its own list of what to say: wind, glide ratio, thermal climb and gain, g-load, bank
-  angle and everything the original offers.
+  event has its own list of what to say: wind, glide ratio, height gained in the thermal, g-load, bank
+  angle and everything the original offers, with the span of the climb rate and the glide ratio and
+  a word before the number to choose per block.
 * **Thermal and wind detection**, glide ratio, wingover and spiral detection.
 * **Barometer and motion sensor working together** in the vario, with filters that adapt to the
   conditions.

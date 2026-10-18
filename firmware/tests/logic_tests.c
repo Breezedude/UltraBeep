@@ -2016,7 +2016,7 @@ static void test_announce(void)
   announce_input_t in = {0};
   in.in_flight = true;
   in.alt_m = 1234.0f;
-  in.climb_ms = 1.27f;
+  in.climb_ms[1] = 1.27f; /* over 10 s, the default span */
   in.fix = true;
   in.speed_kmh = 42.4f;
   in.course_deg = 100.0f;
@@ -2035,7 +2035,7 @@ static void test_announce(void)
   CHECK(group_is(&a, 5, "time/time", "time/hour_14", "time/min_35"), "time %s %s", a.clip[5][1], a.clip[5][2]);
   CHECK(group_is(&a, 6, "battery", "75_percent", NULL), "battery %s", a.clip[6][1]);
 
-  in.climb_ms = -1.3f;
+  in.climb_ms[1] = -1.3f;
   in.course_deg = 350.0f;
   in.airtime_s = 125U;
   announce_build(&all, false, &in, &a);
@@ -2062,22 +2062,103 @@ static void test_announce(void)
   /* the signal tone of the block "tone": ":<name>" in any order with ":ble", the first without one */
   announce_list_t sl;
   announce_list_parse(&sl, "altitude,tone:ble:trill");
-  CHECK(sl.count == 2 && sl.tone == 5 && sl.ble_mute == (1U << 1), "tone:ble:trill -> %u, ble %x", sl.tone, sl.ble_mute);
+  CHECK(sl.count == 2 && ANN_OPT_VARIANT(sl.opt[1]) == 5 && sl.ble_mute == (1U << 1), "tone:ble:trill -> %u, ble %x",
+        ANN_OPT_VARIANT(sl.opt[1]), sl.ble_mute);
   announce_list_parse(&sl, "tone : low_chirp_up : ble,altitude");
-  CHECK(sl.count == 2 && sl.tone == 10 && sl.ble_mute == 1U, "tone:low_chirp_up:ble -> %u, ble %x", sl.tone, sl.ble_mute);
+  CHECK(sl.count == 2 && ANN_OPT_VARIANT(sl.opt[0]) == 10 && sl.ble_mute == 1U, "tone:low_chirp_up:ble -> %u, ble %x",
+        ANN_OPT_VARIANT(sl.opt[0]), sl.ble_mute);
   announce_list_parse(&sl, "tone:nonsense,altitude:blex");
-  CHECK(sl.count == 2 && sl.tone == 0 && sl.ble_mute == 0U, "unknown options ignored: %u, ble %x", sl.tone, sl.ble_mute);
+  CHECK(sl.count == 2 && sl.opt[0] == 0 && sl.opt[1] == 0 && sl.ble_mute == 0U, "unknown options ignored: %u, ble %x",
+        sl.opt[0], sl.ble_mute);
   announce_list_parse(&sl, "climbrate,tone:tock_tock");
   announce_build(&sl, false, &in, &a);
   CHECK(a.groups == 2 && a.count[1] == 0 && a.signal[1] == 9 && strcmp(announce_signal_names[a.signal[1]], "tock_tock") == 0,
         "the tone group carries its signal: %u", a.signal[1]);
 
-  /* the blocks of 0.24: tone, thermal, g-load, bank, summary, glide; unknown names are skipped */
+  /* the options of 0.58: a span "<n>s" and a word before the number, in any order with ":ble" */
+  announce_list_parse(&sl, "climbrate:ble:30s:climb,thermalgain:heightgain:60s,glide:15s,altitude:60s:climb,tone:10s");
+  CHECK(sl.count == 5 && sl.ble_mute == 1U && ANN_OPT_SPAN(sl.opt[0]) == 4 && ANN_OPT_VARIANT(sl.opt[0]) == 1 &&
+            ANN_OPT_SPAN(sl.opt[1]) == 5 && ANN_OPT_VARIANT(sl.opt[1]) == 3 && ANN_OPT_SPAN(sl.opt[2]) == 2 &&
+            ANN_OPT_VARIANT(sl.opt[2]) == 0 && ANN_OPT_SPAN(sl.opt[4]) == 1,
+        "options: spans %u %u %u, words %u %u", ANN_OPT_SPAN(sl.opt[0]), ANN_OPT_SPAN(sl.opt[1]), ANN_OPT_SPAN(sl.opt[2]),
+        ANN_OPT_VARIANT(sl.opt[0]), ANN_OPT_VARIANT(sl.opt[1]));
+  CHECK(announce_list_span_s(&sl, ANN_CLIMBRATE, 10) == 30 && announce_list_span_s(&sl, ANN_GLIDE, 20) == 15 &&
+            announce_list_span_s(&sl, ANN_TONE, 0) == 10 && announce_list_span_s(&sl, ANN_SPEED, 20) == 0,
+        "the span of a block in the list, 0 when it is not there");
+  announce_list_parse(&sl, "glide:25s:gains,climbrate:9s");
+  CHECK(sl.count == 2 && sl.opt[0] == 0 && sl.opt[1] == 0 && announce_list_span_s(&sl, ANN_GLIDE, 20) == 20,
+        "spans and words that do not exist are ignored: %u %u", sl.opt[0], sl.opt[1]);
+  for (unsigned k = 0; k < ANN_SPANS; k++) {
+    in.climb_ms[k] = 0.1f * (float)k + 1.0f; /* 1.0 1.1 1.2 1.3 1.4 1.5: the span tells */
+    in.gain_m[k] = 20.0f * (float)k;
+    in.glide_valid[k] = true;
+    in.glide_ratio[k] = 5.0f + (float)k;
+  }
+  in.thermal_valid = true;
+  in.thermal_gain_m = 347.0f;
+  announce_list_parse(&sl, "climbrate,thermalgain,glide");
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "vario_lift_100", NULL, NULL) && group_is(&a, 1, "al/al_350", NULL, NULL) && group_is(&a, 2, "8", "dot", "0"),
+        "defaults: the climb over 10 s (%s), the phase's gain (%s), the glide over 20 s (%s)", a.clip[0][0], a.clip[1][0],
+        a.clip[2][0]);
+  announce_list_parse(&sl, "climbrate:30s:climb,thermalgain:60s:heightgain,glide:60s");
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "climb", "vario_lift_150", NULL) && group_is(&a, 1, "height_gain", "al/al_100", NULL) &&
+            group_is(&a, 2, "10", "dot", "0"),
+        "spans and words: %s %s, %s %s, %s", a.clip[0][0], a.clip[0][1], a.clip[1][0], a.clip[1][1], a.clip[2][0]);
+  announce_list_parse(&sl, "climbrate:15s:gain,thermalgain:30s:climb,glide:30s");
+  in.glide_valid[4] = false;
+  announce_build(&sl, false, &in, &a);
+  CHECK(a.groups == 2 && group_is(&a, 0, "vario_lift_100", NULL, NULL) && group_is(&a, 1, "al/al_80", NULL, NULL),
+        "a word of another block is not said; 1.2 rounds to the 1.0 clip; no glide over 30 s: %u groups", a.groups);
+  in.thermal_valid = false;
+  announce_list_parse(&sl, "thermalgain:60s:gain,thermalgain");
+  announce_build(&sl, false, &in, &a);
+  CHECK(a.groups == 1 && group_is(&a, 0, "gain", "al/al_100", NULL), "the last 60 s need no thermal: %u groups", a.groups);
+  in.gain_m[5] = -23.0f;
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "gain", "al/al_-20", NULL), "a loss is said as such: %s", a.clip[0][1]);
+  in.in_flight = false;
+  announce_build(&sl, false, &in, &a);
+  CHECK(a.groups == 0, "no height gained on the ground");
+  in.in_flight = true;
+  /* the glide ratio as one clip of the extension series, rounded to the steps that exist */
+  in.glide_series = true;
+  in.glide_word = true;
+  in.glide_ratio[3] = 8.66f;
+  announce_list_parse(&sl, "glide");
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "glide_ratio", "glide/glide_87", NULL), "glide series 8.66: %s %s", a.clip[0][0], a.clip[0][1]);
+  in.glide_word = false;
+  in.glide_ratio[3] = 3.3f;
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "glide/glide_35", NULL, NULL), "glide series 3.3 -> halves: %s", a.clip[0][0]);
+  in.glide_ratio[3] = 15.2f;
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "glide/glide_150", NULL, NULL), "glide series 15.2 -> halves: %s", a.clip[0][0]);
+  in.glide_ratio[3] = 27.0f;
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "glide/glide_270", NULL, NULL), "glide series 27 -> whole: %s", a.clip[0][0]);
+  in.glide_ratio[3] = 48.0f;
+  announce_build(&sl, false, &in, &a);
+  CHECK(group_is(&a, 0, "glide/glide_300", NULL, NULL), "glide series beyond 30: %s", a.clip[0][0]);
+  CHECK(summary_glide_clip(12.96f) == 130 && summary_glide_clip(13.2f) == 130 && summary_glide_clip(13.3f) == 135 &&
+            summary_glide_clip(5.04f) == 50 && summary_glide_clip(5.06f) == 51 && summary_glide_clip(0.2f) == 0 &&
+            summary_glide_clip(22.4f) == 220 && summary_glide_clip(22.6f) == 230,
+        "glide clips at the edges of the ranges");
+  in.glide_series = false;
+  for (unsigned k = 0; k < ANN_SPANS; k++) {
+    in.climb_ms[k] = 1.27f;
+    in.gain_m[k] = 0.0f;
+    in.glide_valid[k] = false;
+  }
+  in.thermal_gain_m = 0.0f;
+
+  /* the blocks of 0.24: tone, thermal, g-load, bank, summary, glide; unknown names (thermalclimb since 0.58) are skipped */
   announce_list_t l;
   announce_list_parse(&l, "tone, thermalclimb,thermalgain,maxg:ble,bank,maxaltitude,maxspeed,maxclimb,glide,nonsense,tone");
-  CHECK(l.count == 9 && (l.ble_mute & (1U << 3)), "unknown and repeated blocks skipped: %u", l.count);
+  CHECK(l.count == 8 && (l.ble_mute & (1U << 2)), "unknown and repeated blocks skipped: %u", l.count);
   in.thermal_valid = true;
-  in.thermal_climb_ms = 2.1f;
   in.thermal_gain_m = 347.0f;
   in.g_load = 2.3f;
   in.bank_deg = 64.2f;
@@ -2086,34 +2167,33 @@ static void test_announce(void)
   in.max_speed_kmh = 43.2f;
   in.max_climb_ms = 2.5f;
   in.max_sink_ms = 4.0f;
-  in.glide_valid = true;
-  in.glide_ratio = 8.66f;
+  in.glide_valid[3] = true;
+  in.glide_ratio[3] = 8.66f;
   in.g_word = true;
   announce_build(&l, false, &in, &a);
-  CHECK(a.groups == 9 && a.count[0] == 0 && a.signal[0] == 0, "tone group (the default signal) and %u groups", a.groups);
-  CHECK(group_is(&a, 1, "vario_lift_200", NULL, NULL), "thermal climb %s", a.clip[1][0]);
-  CHECK(group_is(&a, 2, "al/al_350", NULL, NULL), "thermal gain %s", a.clip[2][0]);
-  CHECK(a.count[3] == 4 && strcmp(a.clip[3][0], "g_load") == 0 && strcmp(a.clip[3][1], "2") == 0 &&
-            strcmp(a.clip[3][2], "dot") == 0 && strcmp(a.clip[3][3], "3") == 0,
-        "g-load 2 dot 3: %s %s %s %s", a.clip[3][0], a.clip[3][1], a.clip[3][2], a.clip[3][3]);
-  CHECK(group_is(&a, 4, "60", NULL, NULL), "bank 64 -> clip %s", a.clip[4][0]);
-  CHECK(group_is(&a, 5, "altitude_max", "al/al_2350", NULL), "max altitude %s", a.clip[5][1]);
-  CHECK(group_is(&a, 6, "speed_max", "sp/sp_43", NULL), "max speed %s", a.clip[6][1]);
-  CHECK(a.count[7] == 4 && strcmp(a.clip[7][0], "vz_max") == 0 && strcmp(a.clip[7][1], "vario_lift_250") == 0 &&
-            strcmp(a.clip[7][2], "pause") == 0 && strcmp(a.clip[7][3], "vario_sink_400") == 0,
-        "max climb, pause, sink: %s %s %s", a.clip[7][1], a.clip[7][2], a.clip[7][3]);
-  CHECK(group_is(&a, 8, "8", "dot", "7"), "glide %s %s %s", a.clip[8][0], a.clip[8][1], a.clip[8][2]);
+  CHECK(a.groups == 8 && a.count[0] == 0 && a.signal[0] == 0, "tone group (the default signal) and %u groups", a.groups);
+  CHECK(group_is(&a, 1, "al/al_350", NULL, NULL), "thermal gain %s", a.clip[1][0]);
+  CHECK(a.count[2] == 4 && strcmp(a.clip[2][0], "g_load") == 0 && strcmp(a.clip[2][1], "2") == 0 &&
+            strcmp(a.clip[2][2], "dot") == 0 && strcmp(a.clip[2][3], "3") == 0,
+        "g-load 2 dot 3: %s %s %s %s", a.clip[2][0], a.clip[2][1], a.clip[2][2], a.clip[2][3]);
+  CHECK(group_is(&a, 3, "60", NULL, NULL), "bank 64 -> clip %s", a.clip[3][0]);
+  CHECK(group_is(&a, 4, "altitude_max", "al/al_2350", NULL), "max altitude %s", a.clip[4][1]);
+  CHECK(group_is(&a, 5, "speed_max", "sp/sp_43", NULL), "max speed %s", a.clip[5][1]);
+  CHECK(a.count[6] == 4 && strcmp(a.clip[6][0], "vz_max") == 0 && strcmp(a.clip[6][1], "vario_lift_250") == 0 &&
+            strcmp(a.clip[6][2], "pause") == 0 && strcmp(a.clip[6][3], "vario_sink_400") == 0,
+        "max climb, pause, sink: %s %s %s", a.clip[6][1], a.clip[6][2], a.clip[6][3]);
+  CHECK(group_is(&a, 7, "8", "dot", "7"), "glide %s %s %s", a.clip[7][0], a.clip[7][1], a.clip[7][2]);
   /* with the g/g_<tenths> series the load factor is one clip, above 10 g the last one */
   in.g_series = true;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 3, "g_load", "g/g_23", NULL), "g-load series: %s %s", a.clip[3][0], a.clip[3][1]);
+  CHECK(group_is(&a, 2, "g_load", "g/g_23", NULL), "g-load series: %s %s", a.clip[2][0], a.clip[2][1]);
   in.g_word = false;
   in.g_load = 12.4f;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 3, "g/g_100", NULL, NULL), "g-load series above 10 g: %s", a.clip[3][0]);
+  CHECK(group_is(&a, 2, "g/g_100", NULL, NULL), "g-load series above 10 g: %s", a.clip[2][0]);
   in.g_load = 0.96f;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 3, "g/g_10", NULL, NULL), "g-load series rounds to tenths: %s", a.clip[3][0]);
+  CHECK(group_is(&a, 2, "g/g_10", NULL, NULL), "g-load series rounds to tenths: %s", a.clip[2][0]);
   in.g_series = false;
   in.g_word = true;
   in.g_load = 2.3f;
@@ -2121,28 +2201,28 @@ static void test_announce(void)
   in.bank_series = true;
   in.bank_word = true;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 4, "bank_angle", "bank/bank_65", NULL), "bank series 64.2: %s %s", a.clip[4][0], a.clip[4][1]);
+  CHECK(group_is(&a, 3, "bank_angle", "bank/bank_65", NULL), "bank series 64.2: %s %s", a.clip[3][0], a.clip[3][1]);
   in.bank_word = false;
   in.bank_deg = 62.4f;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 4, "bank/bank_60", NULL, NULL), "bank series 62.4: %s", a.clip[4][0]);
+  CHECK(group_is(&a, 3, "bank/bank_60", NULL, NULL), "bank series 62.4: %s", a.clip[3][0]);
   in.bank_deg = 89.9f;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 4, "bank/bank_90", NULL, NULL), "bank series 89.9: %s", a.clip[4][0]);
+  CHECK(group_is(&a, 3, "bank/bank_90", NULL, NULL), "bank series 89.9: %s", a.clip[3][0]);
   in.bank_deg = 133.0f; /* a measured roll angle over the top */
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 4, "bank/bank_135", NULL, NULL), "bank series 133: %s", a.clip[4][0]);
+  CHECK(group_is(&a, 3, "bank/bank_135", NULL, NULL), "bank series 133: %s", a.clip[3][0]);
   in.bank_deg = 200.0f;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 4, "bank/bank_180", NULL, NULL), "bank series above 180: %s", a.clip[4][0]);
+  CHECK(group_is(&a, 3, "bank/bank_180", NULL, NULL), "bank series above 180: %s", a.clip[3][0]);
   in.bank_deg = 0.0f;
   announce_build(&l, false, &in, &a);
-  CHECK(group_is(&a, 4, "bank/bank_0", NULL, NULL), "bank series 0: %s", a.clip[4][0]);
+  CHECK(group_is(&a, 3, "bank/bank_0", NULL, NULL), "bank series 0: %s", a.clip[3][0]);
   in.bank_series = false;
   in.bank_deg = 31.0f;
   in.g_load = 0.0f;
   announce_build(&l, true, &in, &a);
-  CHECK(a.groups == 7, "no load: no g-load and bank, %u groups", a.groups);
+  CHECK(a.groups == 6, "no load: no g-load and bank, %u groups", a.groups);
 
   /* the demo values of the configurator's play button give every block something to say */
   announce_list_t every;
@@ -2154,9 +2234,17 @@ static void test_announce(void)
   CHECK(a.groups == 10 && demo.glide_word && group_is(&a, 7, "glide_ratio", "8", "dot") == false &&
             a.count[7] == 4 && strcmp(a.clip[7][0], "glide_ratio") == 0,
         "demo: %u groups, glide %s", a.groups, a.clip[7][0]);
-  announce_list_parse(&every, "thermalclimb,thermalgain,maxg,bank,maxaltitude,maxspeed,maxclimb");
+  announce_list_parse(&every, "thermalgain,maxg,bank,maxaltitude,maxspeed,maxclimb,climbrate:30s:climb,thermalgain:60s:gain,glide:60s");
   announce_build(&every, false, &demo, &a);
-  CHECK(a.groups == 7, "demo: the thermal, g-load and summary blocks, %u groups", a.groups);
+  CHECK(a.groups == 8 && group_is(&a, 6, "climb", "vario_lift_150", NULL) && group_is(&a, 0, "al/al_350", NULL, NULL),
+        "demo: the thermal, g-load and summary blocks, every span, %u groups", a.groups);
+  demo.wind_words = true;
+  demo.glide_series = true;
+  announce_list_parse(&every, "wind,glide,thermalgain:60s:heightgain");
+  announce_build(&every, false, &demo, &a);
+  CHECK(a.groups == 3 && group_is(&a, 0, "wind", "sp/sp_12", "nav/from_w") && group_is(&a, 1, "glide_ratio", "glide/glide_87", NULL) &&
+            group_is(&a, 2, "height_gain", "al/al_90", NULL),
+        "demo with the wind words and the glide series: %s %s %s, %s", a.clip[0][0], a.clip[0][1], a.clip[0][2], a.clip[1][1]);
 
   /* lists without a key: derived from the stock keys */
   announce_config_t c;
@@ -2246,7 +2334,7 @@ static void thermal_step(thermal_t *t, const thermal_config_t *c, uint32_t *s, f
 
 static void test_thermal(void)
 {
-  const thermal_config_t c = {20, 100, 60, 50, 20, 0};
+  const thermal_config_t c = {20, 100, 60, 50, 20, 0, 0}; /* the glide ratio over its default 20 s */
   thermal_t t;
   thermal_counts_t n = {0};
   uint32_t s = 1000;
@@ -2357,6 +2445,40 @@ static void test_thermal(void)
   CHECK(!t.circling, "both straight: circling ended");
   step_gyro_ok = false;
 
+  /* the glide ratio over longer spans: 60 s of straight flight after the thermal, not before */
+  thermal_init(&t);
+  memset(&n, 0, sizeof(n));
+  heading = 0.0f;
+  const thermal_config_t c60 = {20, 100, 60, 50, 30, 0, 60}; /* the glide block says "glide:60s" */
+  for (int i = 0; i < 120; i++) {
+    heading += 18.0f;
+    thermal_step(&t, &c60, &s, heading, 10.0f, 0.0f, 0.0f, &alt, 1.5f, &n);
+  }
+  float ratio = 0.0f;
+  for (int i = 0; i < 45; i++) {
+    thermal_step(&t, &c60, &s, 0.0f, 10.0f, 0.0f, 0.0f, &alt, -1.0f, &n);
+  }
+  CHECK(!t.circling && n.glide == 0 && thermal_glide_over(&t, 20, &ratio) && ratio > 9.5f && ratio < 10.5f &&
+            !thermal_glide_over(&t, 60, &ratio),
+        "45 s after the thermal: the 20 s ratio is there (%d/10), the 60 s one not yet, no report", (int)(ratio * 10.0f));
+  for (int i = 0; i < 20; i++) {
+    thermal_step(&t, &c60, &s, 0.0f, 10.0f, 0.0f, 0.0f, &alt, -1.0f, &n);
+  }
+  CHECK(n.glide == 0 && !thermal_glide_over(&t, 60, &ratio),
+        "65 s after the thermal: the end of the circling was seen about 58 s ago, the 60 s span still waits");
+  for (int i = 0; i < 10; i++) {
+    thermal_step(&t, &c60, &s, 0.0f, 10.0f, 0.0f, 0.0f, &alt, -1.0f, &n);
+  }
+  CHECK(n.glide == 1 && t.glide > 9.9f && t.glide < 10.1f && thermal_glide_over(&t, 60, &ratio) && thermal_glide_over(&t, 63, &ratio) &&
+            !thermal_glide_over(&t, 0, &ratio),
+        "the report waits for 60 s of straight flight and leaves the thermal out: %u, %d/10", n.glide, (int)(t.glide * 10.0f));
+  heading = 0.0f;
+  for (int i = 0; i < 10; i++) {
+    heading += 10.0f; /* a 100 degree course change: the 20 s ratio goes, the 60 s one too */
+    thermal_step(&t, &c60, &s, heading, 10.0f, 0.0f, 0.0f, &alt, -1.0f, &n);
+  }
+  CHECK(!t.circling && !thermal_glide_over(&t, 20, &ratio) && !thermal_glide_over(&t, 60, &ratio), "a turn of 100 deg: no glide ratio");
+
   /* announcements of the event items */
   announce_list_t items;
   announce_list_parse(&items, "wind,glide");
@@ -2364,20 +2486,32 @@ static void test_thermal(void)
   in.wind_valid = true;
   in.wind_kmh = 10.8f;
   in.wind_from_deg = 268.0f;
-  in.glide_valid = true;
-  in.glide_ratio = 8.66f;
+  in.glide_valid[3] = true;
+  in.glide_ratio[3] = 8.66f;
   announcement_t a;
   announce_build(&items, false, &in, &a);
   CHECK(a.groups == 2 && group_is(&a, 0, "nav/wind", "nav/w", "sp/sp_11"), "wind %s %s", a.clip[0][1], a.clip[0][2]);
   CHECK(a.count[1] == 3 && strcmp(a.clip[1][0], "8") == 0 && strcmp(a.clip[1][1], "dot") == 0 &&
             strcmp(a.clip[1][2], "7") == 0,
         "glide 8 dot 7: %s %s %s", a.clip[1][0], a.clip[1][1], a.clip[1][2]);
-  in.glide_ratio = 23.4f;
+  in.glide_ratio[3] = 23.4f;
   in.glide_word = true;
   in.wind_kmh = 1.0f;
   announce_build(&items, false, &in, &a);
   CHECK(group_is(&a, 0, "nav/wind", "sp/sp_1", NULL), "calm wind without direction");
   CHECK(group_is(&a, 1, "glide_ratio", "23", NULL), "glide 23 with the word: %s %s", a.clip[1][0], a.clip[1][1]);
+  /* with the extension clips: "wind", the speed, "from the west"; a calm wind has no direction */
+  in.wind_words = true;
+  in.wind_kmh = 10.8f;
+  announce_build(&items, false, &in, &a);
+  CHECK(group_is(&a, 0, "wind", "sp/sp_11", "nav/from_w"), "wind words: %s %s %s", a.clip[0][0], a.clip[0][1], a.clip[0][2]);
+  in.wind_from_deg = 30.0f;
+  in.wind_kmh = 1.5f;
+  announce_build(&items, false, &in, &a);
+  CHECK(group_is(&a, 0, "wind", "sp/sp_2", NULL), "wind words, calm: %s %s", a.clip[0][0], a.clip[0][1]);
+  in.wind_kmh = 25.0f;
+  announce_build(&items, false, &in, &a);
+  CHECK(group_is(&a, 0, "wind", "sp/sp_25", "nav/from_ne"), "wind words from 30 deg: %s", a.clip[0][2]);
 }
 
 /* ---- QOA decoder: streaming (slice by slice) vs. the frame-at-once decoder of 0.16 ---- */

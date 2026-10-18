@@ -729,9 +729,10 @@ function renderVoicepack() {
     el("thead", {}, el("tr", {}, el("th", {}, "Clip"), el("th", {}, "Text"), el("th", {}, ""))), body));
   const catalogueCard = fieldset({ title: "Clips", help: "What a voice pack has and what it says in the language of the " +
       "pack chosen above, in two tables: the clips UltraBeep adds - the original packs do not have them: the launch " +
-      "readiness, the pairing request, glide ratio, load and bank in the announcements, the load factor as one clip per " +
-      "tenth of a g and the bank angle in steps of 5 degrees (said instead of single numbers once the device has them); " +
-      "generate them and send them to " +
+      "readiness, the pairing request, the words glide ratio, load, bank, wind, climb, gain and height gain of the " +
+      "announcements, the load factor as one clip per tenth of a g, the bank angle in steps of 5 degrees, the glide " +
+      "ratio as one clip (\"8.7\") and the wind's direction as \"from the west\" (said instead of single numbers or " +
+      "the stock's form once the device has them); generate them and send them to " +
       "the device, or build a whole pack - and the clips of the original pack. The filter works in both. ▶ plays a clip " +
       "the device has (the pack's, or one sent to voices/custom), ♪ a clip generated here, ✎ opens it in the editor." },
   customRow("Filter", filter),

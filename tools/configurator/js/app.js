@@ -67,20 +67,28 @@ function legacyItems(n, trig) {
   if (lg.kind === "summary") {
     const map = { duration: "duration", maxaltitude: "altitude", maxspeed: "speed", maxclimb: "climbrate" };
     return trig.pool.filter((id) => map[id] && isTrue(getP(n, `flightsummary_${map[id]}_bool`) ?? "true"))
-      .map((id) => ({ id, ble: BLOCK_BY_ID[id].ble }));
+      .map((id) => ({ id, ble: BLOCK_BY_ID[id].ble, opts: {} }));
   }
   if (lg.kind === "matrix") {
     return STOCK_MATRIX_ITEMS.filter((id) => isTrue(getP(n, `${lg.prefix}${id}_bool`)))
-      .map((id) => ({ id, ble: BLOCK_BY_ID[id].ble }));
+      .map((id) => ({ id, ble: BLOCK_BY_ID[id].ble, opts: {} }));
   }
-  return lg.items.map((id) => ({ id, ble: BLOCK_BY_ID[id].ble }));
+  return lg.items.map((id) => ({ id, ble: BLOCK_BY_ID[id].ble, opts: {} }));
 }
 
-/* "block[:ble][:<signal>]": the signal tone's name only on the block "tone" (SIGNAL_TONES; "" = the default). */
+/*
+ * "block[:ble][:<option>...]": the block's options (BLOCK_OPTIONS) by their values, in any order; opts holds
+ * them by key, "" for the firmware's default. Unknown words are dropped (the firmware ignores them too).
+ */
 function parseItems(text) {
   return text.split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
-    const [id, ...opts] = s.split(":").map((p) => p.trim());
-    return { id, ble: opts.includes("ble"), sound: id === "tone" ? opts.find((o) => SIGNAL_BY_ID[o]) || "" : "" };
+    const [id, ...words] = s.split(":").map((p) => p.trim());
+    const opts = {};
+    for (const o of BLOCK_OPTIONS[id] || []) {
+      const v = words.find((w) => w && o.choices.some(([value]) => value === w));
+      opts[o.key] = v && v !== o.def ? v : "";
+    }
+    return { id, ble: words.includes("ble"), opts };
   }).filter((it) => BLOCK_BY_ID[it.id]);
 }
 
@@ -89,9 +97,9 @@ function readItems(n, trig) {
   return v === undefined ? legacyItems(n, trig) : parseItems(v);
 }
 
-/* ":ble" before the signal's name: firmware before 0.57 reads only the first option and still mutes the block. */
+/* ":ble" first: firmware before 0.57 reads only the first option and still mutes the block. Defaults are not written. */
 const itemsText = (items) => items.map((it) => [it.id, it.ble ? "ble" : "",
-  it.id === "tone" && it.sound && it.sound !== SIGNAL_TONES[0].id ? it.sound : ""].filter(Boolean).join(":")).join(",");
+  ...(BLOCK_OPTIONS[it.id] || []).map((o) => (it.opts && it.opts[o.key]) || "")].filter(Boolean).join(":")).join(",");
 
 function writeItems(n, trig, items) {
   setP(n, itemsKey(trig), itemsText(items), true);
@@ -737,22 +745,24 @@ function triggerCard(n, trig) {
     const box = el("input", { type: "checkbox", "aria-label": `Mute ${block.label} with BLE` });
     box.checked = it.ble;
     box.addEventListener("change", () => { it.ble = box.checked; writeItems(n, trig, items); });
-    /* the signal tone: which one, and a play button (the device when connected, else here) */
-    let picker = null;
-    if (it.id === "tone") {
-      const sel = el("select", { class: "signal", "aria-label": "Which signal tone" },
-        SIGNAL_TONES.map((s, k) => el("option", { value: s.id }, k ? s.label : `${s.label} (default)`)));
-      sel.value = it.sound || SIGNAL_TONES[0].id;
+    /* the block's options (BLOCK_OPTIONS): quiet selects after the name; the signal tone with a play button
+     * (the device when connected, else here) */
+    const options = (BLOCK_OPTIONS[it.id] || []).map((o) => {
+      const sel = el("select", { class: "block-opt", "aria-label": `${block.label}: ${o.label}`, title: o.label },
+        o.choices.map(([value, label]) => el("option", { value }, label)));
+      sel.value = (it.opts && it.opts[o.key]) || o.def;
       sel.addEventListener("change", () => {
-        it.sound = sel.value === SIGNAL_TONES[0].id ? "" : sel.value;
+        it.opts = it.opts || {};
+        it.opts[o.key] = sel.value === o.def ? "" : sel.value;
         writeItems(n, trig, items);
-        playSignal(sel.value);
+        if (o.play) playSignal(sel.value);
       });
-      const hear = el("button", { type: "button", class: "play signal-play",
+      const hear = o.play ? el("button", { type: "button", class: "play signal-play",
         title: deviceClient() ? "Play on the device" : "Play here (an approximation of the piezo)",
-        "aria-label": "Play the signal tone", onclick: () => playSignal(sel.value) }, "▶");
-      picker = el("span", { class: "signal-pick" }, sel, hear);
-    }
+        "aria-label": "Play the signal tone", onclick: () => playSignal(sel.value) }, "▶") : null;
+      return [sel, hear];
+    });
+    const picker = options.length ? el("span", { class: "block-opts" }, options) : null;
     const li = el("tr", { class: "block" },
       el("td", { class: "col-grip" }, grip),
       el("td", { class: "col-name" }, block.label, block.help ? info(block.help, block.label) : null, picker),
@@ -790,7 +800,7 @@ function triggerCard(n, trig) {
     let dragged = false;
     chip.addEventListener("click", () => {
       if (dragged) { dragged = false; return; }
-      items.push({ id, ble: block.ble });
+      items.push({ id, ble: block.ble, opts: {} });
       commit();
     });
     chip.addEventListener("pointerdown", (e) => {
@@ -801,7 +811,7 @@ function triggerCard(n, trig) {
         if (Math.abs(ev.clientY - startY) + Math.abs(ev.clientX - startX) < 6) return;
         disarm(ev);
         dragged = true;
-        const it = { id, ble: block.ble };
+        const it = { id, ble: block.ble, opts: {} };
         items.push(it);
         const li = itemRow(it, items.length - 1);
         list.append(li);

@@ -12,7 +12,7 @@
 #define THERMALING_MS 0.1f /* climb reports only while the mean climb is at least this */
 #define EXIT_AVG_S       30U
 #define EXIT_CLIMB_MS    0.2f
-#define GLIDE_AVG_S      20U
+#define GLIDE_DEFAULT_S  20U    /* the span of the glide ratio when the configuration names none */
 #define GLIDE_MIN_SINK   0.3f   /* m/s: below, the glide ratio is meaningless */
 #define GLIDE_MAX        60.0f  /* numbers in the voice pack */
 #define FIT_TURN_DEG     330.0f /* the wind fit needs nearly a full turn */
@@ -249,7 +249,7 @@ unsigned thermal_update(thermal_t *t, const thermal_config_t *c, uint32_t now, b
       float ratio;
       bool due = !t->glide_said ? now - t->straight_t >= c->glide_straight_s
                                 : c->glide_repeat_min && now - t->glide_last_s >= c->glide_repeat_min * 60U;
-      if (due && thermal_glide_now(t, &ratio)) {
+      if (due && thermal_glide_over(t, c->glide_window_s ? c->glide_window_s : GLIDE_DEFAULT_S, &ratio)) {
         ev |= THERMAL_GLIDE;
         t->glide = ratio;
         t->glide_said = true;
@@ -263,21 +263,24 @@ unsigned thermal_update(thermal_t *t, const thermal_config_t *c, uint32_t now, b
   return ev;
 }
 
-bool thermal_glide_now(const thermal_t *t, float *ratio)
+bool thermal_glide_over(const thermal_t *t, unsigned span_s, float *ratio)
 {
-  if (t->circling || t->count <= GLIDE_AVG_S || fabsf(sum_turn(t, GLIDE_AVG_S)) >= 90.0f) {
+  unsigned n = span_s < THERMAL_WINDOW ? span_s : THERMAL_WINDOW - 1U;
+  /* since_end keeps the tail of the circling out of the span: a few seconds of it pass the 90 degree check
+   * but still climb, and a minute's ratio would come out a fifth too high */
+  if (n == 0U || t->circling || t->since_end < n || t->count <= n || fabsf(sum_turn(t, n)) >= 90.0f) {
     return false;
   }
   float speed = 0.0f;
-  for (unsigned k = 0; k < GLIDE_AVG_S; k++) {
+  for (unsigned k = 0; k < n; k++) {
     unsigned i = idx(t, k);
     if (!t->vel_ok[i]) {
       return false;
     }
     speed += sqrtf(t->ve[i] * t->ve[i] + t->vn[i] * t->vn[i]);
   }
-  speed /= (float)GLIDE_AVG_S;
-  float sink = (t->alt[idx(t, GLIDE_AVG_S)] - t->alt[idx(t, 0)]) / (float)GLIDE_AVG_S;
+  speed /= (float)n;
+  float sink = (t->alt[idx(t, n)] - t->alt[idx(t, 0)]) / (float)n;
   if (sink < GLIDE_MIN_SINK || speed / sink > GLIDE_MAX) {
     return false;
   }

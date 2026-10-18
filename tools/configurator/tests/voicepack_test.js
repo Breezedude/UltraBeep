@@ -7,7 +7,7 @@
  *   node tools/configurator/tests/voicepack_test.js
  */
 const path = require("node:path");
-const { voicepackClips, voicepackText, voicepackInfo, voicepackExtension, VOICEPACK_LANGUAGES, VOICEPACKS,
+const { voicepackClips, voicepackText, voicepackInfo, voicepackExtension, voicepackGlideSteps, VOICEPACK_LANGUAGES, VOICEPACKS,
   VOICEPACK_EXTENSION } = require(path.join(__dirname, "..", "js", "voicepack.js"));
 
 let failed = 0;
@@ -40,13 +40,26 @@ check(voicepackText("pt", "takeoff") === "Descolagem" && voicepackText("br", "ta
 
 const series = de.filter((c) => c.name.startsWith("g/"));
 const bank = de.filter((c) => c.name.startsWith("bank/"));
+const glide = de.filter((c) => c.name.startsWith("glide/"));
+const from = de.filter((c) => c.name.startsWith("nav/from_"));
 const sink = de.filter((c) => /^vario_sink_\d+$/.test(c.name));
-check(VOICEPACK_EXTENSION.size === 7 && de.filter((c) => !c.stock).length === 7 + 101 + 37 &&
-  de.filter((c) => c.stock).length === de.length - 145 && [...series, ...bank].every((c) => !c.stock) &&
-  voicepackExtension("g/g_23") && voicepackExtension("bank/bank_60") &&
-  !voicepackExtension("al/al_1230") && !voicepackExtension("gps_ok") && voicepackExtension("bank_angle") &&
+check(VOICEPACK_EXTENSION.size === 11 && de.filter((c) => !c.stock).length === 11 + 101 + 37 + 117 + 8 &&
+  de.filter((c) => c.stock).length === de.length - 274 && [...series, ...bank, ...glide, ...from].every((c) => !c.stock) &&
+  voicepackExtension("g/g_23") && voicepackExtension("bank/bank_60") && voicepackExtension("glide/glide_87") && voicepackExtension("nav/from_w") &&
+  !voicepackExtension("al/al_1230") && !voicepackExtension("gps_ok") && !voicepackExtension("nav/w") && !voicepackExtension("nav/wind") &&
+  voicepackExtension("bank_angle") && voicepackExtension("wind") && voicepackExtension("height_gain") &&
   Object.keys(VOICEPACK_LANGUAGES).every((l) => [...VOICEPACK_EXTENSION].every((n) => voicepackText(l, n))),
-"the 7 extension words, the 101 load factor and the 37 bank angle clips are flagged and have texts in every language");
+"the 11 extension words, the 101 load factor, 37 bank angle, 117 glide ratio and 8 wind direction clips are flagged and have texts in every language");
+check(glide.length === 117 && voicepackGlideSteps().length === 117 && glide[0].name === "glide/glide_0" && glide[116].name === "glide/glide_300" &&
+  voicepackText("de", "glide/glide_87") === "8.7" && voicepackText("de", "glide/glide_50") === "5" && voicepackText("fr", "glide/glide_135") === "13.5" &&
+  voicepackText("en", "glide/glide_300") === "30" && !voicepackText("en", "glide/glide_132") && !voicepackText("en", "glide/glide_225") &&
+  voicepackText("en", "glide/glide_51") === "5.1" && voicepackText("en", "glide/glide_130") === "13" && voicepackText("en", "glide/glide_45") === "4.5",
+"the glide ratio series: halves to 5, tenths to 13, halves to 22, whole to 30, as plain numbers with a decimal point");
+check(from.length === 8 && voicepackText("de", "nav/from_w") === "aus Westen" && voicepackText("en", "nav/from_ne") === "from the north-east" &&
+  voicepackText("fr", "nav/from_e") === "de l'est" && voicepackText("pt", "nav/from_e") === "de este" && voicepackText("br", "nav/from_e") === "de leste" &&
+  voicepackText("br", "nav/from_n") === "de norte" && voicepackText("nl", "nav/from_sw") === "uit het zuidwesten" &&
+  voicepackText("de", "wind") === "Wind:" && voicepackText("it", "climb") === "Salita:" && voicepackText("es", "height_gain") === "Ganancia de altura:",
+"the wind direction clips and the words before a number in every language");
 check(sink.length === 54 && sink[sink.length - 1].name === "vario_sink_2500" && sink.every((c) => c.stock) &&
   de.filter((c) => c.stock).length === 993 && voicepackText("de", "vario_sink_1200") === "minus 12 Meter pro Sekunde" &&
   voicepackText("en", "vario_sink_2450") === "minus 24.5 metres per second" && voicepackText("de", "sp/sp_80") === "80 Kilometer pro Stunde",
