@@ -211,6 +211,14 @@ table.blocks { margin: 2px 0 0; }
 .blocks .col-remove { width: 32px; text-align: right; padding-right: 0; }
 .blocks td.col-name button.info { margin-left: 6px; vertical-align: -3px; }
 .blocks td.col-ble input[type=checkbox] { width: 15px; height: 15px; vertical-align: middle; }
+/* the signal tone's choice: quiet until pointed at */
+.blocks .signal-pick { display: inline-flex; align-items: center; gap: 4px; margin-left: 12px; vertical-align: middle; }
+.blocks select.signal { font-size: 13px; padding: 1px 4px; border-radius: 6px; color: var(--muted); background: transparent;
+  border: 1px solid transparent; cursor: pointer; }
+.blocks select.signal:hover, .blocks select.signal:focus-visible { border-color: var(--border); color: var(--text); }
+.blocks select.signal option { color: var(--text); background: var(--panel); }
+.blocks button.signal-play { padding: 0 7px; font-size: 11px; line-height: 1.6; color: var(--muted); border-color: transparent; background: transparent; }
+.blocks button.signal-play:hover { color: var(--accent); border-color: var(--border); }
 .block.dragging { position: relative; z-index: 3; background: var(--panel-2); box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
 .blocks tbody.sorting { user-select: none; -webkit-user-select: none; }
 .grip { padding: 2px; border: 0; background: transparent; color: var(--muted); cursor: grab; touch-action: none; display: inline-grid; place-items: center; }

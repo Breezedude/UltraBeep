@@ -25,7 +25,7 @@ typedef enum {
   ANN_WIND,         /* nav/wind nav/<from> sp/sp_<km/h> */
   ANN_GLIDE,        /* [glide_ratio] <n> dot <tenth> */
   ANN_BATTERY,      /* battery <n>_percent */
-  ANN_TONE,         /* the signal tone on the piezo (MELODY_THERMAL_EXIT), no clips */
+  ANN_TONE,         /* a signal tone on the piezo (announce_signal_names, the list's choice), no clips */
   ANN_THERMALCLIMB, /* vario_lift_<cm/s>: mean climb since the circling began */
   ANN_THERMALGAIN,  /* al/al_<m>: height gained since the circling began */
   ANN_MAXG,         /* [g_load] g/g_<tenths> (without that series: <n> dot <tenth>): peak load factor */
@@ -62,11 +62,20 @@ extern const char *const announce_matrix_names[MATRIX_ITEMS];
 
 #define ANN_LIST_MAX 10
 
+/*
+ * The signal tones of the block "tone" (the notes are in sound.c, in this order): chosen per list with the
+ * option ":<name>" (`tone:ble:trill`); without one the first. Firmware before 0.57 reads the name as no option
+ * and plays its own tone.
+ */
+#define ANN_SIGNALS 11
+extern const char *const announce_signal_names[ANN_SIGNALS];
+
 typedef struct {
   bool set;                  /* the items key was present (an empty value counts) */
   uint8_t count;
   uint8_t block[ANN_LIST_MAX];
   uint16_t ble_mute;         /* bit i: block i is not spoken while a phone is connected */
+  uint8_t tone;              /* the block "tone": index into announce_signal_names */
 } announce_list_t;
 
 typedef struct {
@@ -144,6 +153,7 @@ typedef struct {
 typedef struct {
   unsigned groups;
   unsigned count[ANN_GROUPS];            /* 0: the signal tone instead of clips */
+  uint8_t signal[ANN_GROUPS];            /* ... which one (announce_signal_names) */
   char clip[ANN_GROUPS][ANN_CLIPS][ANN_NAME];
 } announcement_t;
 

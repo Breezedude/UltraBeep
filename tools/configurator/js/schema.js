@@ -326,7 +326,8 @@ const BLOCKS = [
   { id: "glide", label: "Glide ratio", ble: true, help: "Distance over ground per height lost, e.g. \"8 dot 7\"." },
   { id: "battery", label: "Battery", ble: false, help: "Charge in percent." },
   { id: "tone", label: "Signal tone", ble: false,
-    help: "A short falling three-tone signal on the piezo, no voice. Put it first to draw attention to what follows." },
+    help: "A short signal on the piezo, no voice; choose it next to the name (▶ plays it: on the device when " +
+      "connected, else here as an approximation). Put it first to draw attention to what follows." },
   { id: "thermalclimb", label: "Thermal: mean climb", ble: false, help: "Mean climb since the circling began." },
   { id: "thermalgain", label: "Thermal: height gained", ble: false, help: "Height gained since the circling began." },
   { id: "maxaltitude", label: "Maximum altitude", ble: true, help: "Highest altitude of the flight." },
@@ -339,6 +340,26 @@ const BLOCKS = [
       "the peak load (2 g = 60°)." },
 ];
 const BLOCK_BY_ID = Object.fromEntries(BLOCKS.map((b) => [b.id, b]));
+
+/*
+ * The signal tones of the block "tone" (firmware 0.57: announce.c announce_signal_names, the notes in sound.c),
+ * stored as the option "tone[:ble]:<id>"; the first is the default and is not written. notes: [Hz, ms], 0 Hz =
+ * pause, for the preview in the browser.
+ */
+const SIGNAL_TONES = [
+  { id: "tritone_up", label: "Tritone up", notes: [[2637, 90], [0, 25], [3729, 170]] },
+  { id: "octave_leap", label: "Octave leap", notes: [[1270, 70], [0, 25], [2540, 170]] },
+  { id: "bi_dup_twice", label: "Bi-dup twice", notes: [[3322, 40], [3951, 60], [0, 80], [3322, 40], [3951, 60]] },
+  { id: "tick_tock", label: "Tick-tock", notes: [[3800, 25], [0, 110], [3000, 25]] },
+  { id: "chirp_up", label: "Chirp up", notes: [[2400, 25], [2700, 25], [3000, 25], [3300, 25], [3650, 25], [4000, 25]] },
+  { id: "trill", label: "Trill", notes: [[3322, 35], [3951, 35], [3322, 35], [3951, 35], [3322, 35], [3951, 35]] },
+  { id: "low_octave", label: "Octave leap, low", notes: [[566, 70], [0, 25], [1132, 170]] },
+  { id: "low_bi_dup_twice", label: "Bi-dup twice, low", notes: [[800, 40], [1200, 60], [0, 80], [800, 40], [1200, 60]] },
+  { id: "low_trill", label: "Trill, low", notes: [[566, 40], [800, 40], [566, 40], [800, 40], [566, 40], [800, 40]] },
+  { id: "tock_tock", label: "Tock-tock", notes: [[800, 30], [0, 110], [566, 30]] },
+  { id: "low_chirp_up", label: "Chirp up, low", notes: [[566, 25], [680, 25], [800, 25], [950, 25], [1131, 25], [1270, 25]] },
+];
+const SIGNAL_BY_ID = Object.fromEntries(SIGNAL_TONES.map((s) => [s.id, s]));
 
 /* The stock matrix items in the stock order, then the 0.16 additions: for the derived lists. */
 const MATRIX_ITEMS = ["altitude", "climbrate", "speed", "heading", "duration", "time", "wind", "glide", "battery"];
@@ -565,5 +586,5 @@ const STOCK_TONES = [
 const TONE_POINTS = 8;
 
 if (typeof module !== "undefined") {
-  module.exports = { TIME_ZONES, dstTable, dstTableStandardOffset, STOCK_TONES, TONE_POINTS };
+  module.exports = { TIME_ZONES, dstTable, dstTableStandardOffset, STOCK_TONES, TONE_POINTS, SIGNAL_TONES, SIGNAL_BY_ID };
 }

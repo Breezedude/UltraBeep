@@ -36,6 +36,7 @@
 #include "stm32wbxx_ll_hsem.h"
 #include "tl.h"
 
+#include "announce.h"
 #include "audio.h"
 #include "battery.h"
 #include "biplink.h"
@@ -696,15 +697,24 @@ static bool handle_test_command(const char *cmd)
     }
     system_test_announce(trigger, items);
   } else if (sscanf(cmd, "MELODY %31s %u", clip, &vol) == 2) {
-    unsigned i = 0;
+    /* a power-off melody or a signal tone of the announcements */
+    uint8_t v = (uint8_t)(vol > 100 ? 100 : vol);
+    unsigned i = 0, s = 0;
     while (i < SOUND_POWER_OFF_COUNT && strcmp(clip, sound_power_off_names[i]) != 0) {
       i++;
     }
-    if (i >= SOUND_POWER_OFF_COUNT) {
+    while (s < ANN_SIGNALS && strcmp(clip, announce_signal_names[s]) != 0) {
+      s++;
+    }
+    if (i < SOUND_POWER_OFF_COUNT) {
+      sound_play_power_off(i, v);
+    } else if (s < ANN_SIGNALS) {
+      sound_stop(); /* a quick choice in the configurator: the newest one plays */
+      sound_signal(s, v);
+    } else {
       status_send("ERR melody");
       return true;
     }
-    sound_play_power_off(i, (uint8_t)(vol > 100 ? 100 : vol));
   } else if (strcmp(cmd, "PIEZO classic") == 0 || strcmp(cmd, "PIEZO pwm") == 0) {
     /* Experiment: stays until the device is switched off; TEST off keeps it. */
     piezo_set_drive(cmd[6] == 'p' ? PIEZO_DRIVE_PWM : PIEZO_DRIVE_CLASSIC);

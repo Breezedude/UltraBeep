@@ -2059,6 +2059,19 @@ static void test_announce(void)
   announce_build(&all, true, &in, &a);
   CHECK(a.groups == 6 && group_is(&a, 2, "nav/heading", "nav/nw", NULL), "BLE leaves out the speed: %u groups", a.groups);
 
+  /* the signal tone of the block "tone": ":<name>" in any order with ":ble", the first without one */
+  announce_list_t sl;
+  announce_list_parse(&sl, "altitude,tone:ble:trill");
+  CHECK(sl.count == 2 && sl.tone == 5 && sl.ble_mute == (1U << 1), "tone:ble:trill -> %u, ble %x", sl.tone, sl.ble_mute);
+  announce_list_parse(&sl, "tone : low_chirp_up : ble,altitude");
+  CHECK(sl.count == 2 && sl.tone == 10 && sl.ble_mute == 1U, "tone:low_chirp_up:ble -> %u, ble %x", sl.tone, sl.ble_mute);
+  announce_list_parse(&sl, "tone:nonsense,altitude:blex");
+  CHECK(sl.count == 2 && sl.tone == 0 && sl.ble_mute == 0U, "unknown options ignored: %u, ble %x", sl.tone, sl.ble_mute);
+  announce_list_parse(&sl, "climbrate,tone:tock_tock");
+  announce_build(&sl, false, &in, &a);
+  CHECK(a.groups == 2 && a.count[1] == 0 && a.signal[1] == 9 && strcmp(announce_signal_names[a.signal[1]], "tock_tock") == 0,
+        "the tone group carries its signal: %u", a.signal[1]);
+
   /* the blocks of 0.24: tone, thermal, g-load, bank, summary, glide; unknown names are skipped */
   announce_list_t l;
   announce_list_parse(&l, "tone, thermalclimb,thermalgain,maxg:ble,bank,maxaltitude,maxspeed,maxclimb,glide,nonsense,tone");
@@ -2077,7 +2090,7 @@ static void test_announce(void)
   in.glide_ratio = 8.66f;
   in.g_word = true;
   announce_build(&l, false, &in, &a);
-  CHECK(a.groups == 9 && a.count[0] == 0, "tone group and %u groups", a.groups);
+  CHECK(a.groups == 9 && a.count[0] == 0 && a.signal[0] == 0, "tone group (the default signal) and %u groups", a.groups);
   CHECK(group_is(&a, 1, "vario_lift_200", NULL, NULL), "thermal climb %s", a.clip[1][0]);
   CHECK(group_is(&a, 2, "al/al_350", NULL, NULL), "thermal gain %s", a.clip[2][0]);
   CHECK(a.count[3] == 4 && strcmp(a.clip[3][0], "g_load") == 0 && strcmp(a.clip[3][1], "2") == 0 &&

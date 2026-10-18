@@ -186,7 +186,7 @@ profile view). The lists live per profile in `config_ext.ultrabip` (`[profile1]`
 
 | Key | Meaning |
 |---|---|
-| `announce_<trigger>_items_string` | The blocks in the order spoken, comma separated; a block may carry the option `:ble` (not spoken while a phone is connected over Bluetooth). Example: `tone,thermalclimb,altitude:ble`. An empty value means nothing. |
+| `announce_<trigger>_items_string` | The blocks in the order spoken, comma separated; a block may carry options after colons: `:ble` (not spoken while a phone is connected over Bluetooth) and, for `tone`, the name of its signal tone (below; without one the first). Example: `tone:trill,thermalclimb,altitude:ble`. An empty value means nothing. |
 | *(missing key)* | The list is derived from the stock keys BipLink writes (below), or the trigger's default. |
 
 Triggers, their enable key and settings. Keys without a prefix note are extension keys; the stock
@@ -205,8 +205,8 @@ keys stay where they are (profiles 1–3 in `config.ultrabip`), so BipLink chang
 | `wingover` | after a wingover (turns that change direction: at least 0.5 s faster than 40°/s, the other way within 2.5 s, 1.8 g or more in the swings; swings that run into a spiral are logged, not spoken) or a spiral (1.6 g and 50°/s for 4 s), 2 s after the load is back below 1.3 g (firmware/inc/maneuver.h, 0.54; the measured bank 0.55) | `announce_wingover_enable_bool` (true) | – |
 
 Blocks: `altitude`, `climbrate` (10 s mean), `speed`, `heading`, `duration` (flight time), `time`
-(local time of day), `wind`, `glide` (glide ratio), `battery`, `tone` (the falling three-tone
-signal, no voice), `thermalclimb` (mean climb since the circling began), `thermalgain` (height
+(local time of day), `wind`, `glide` (glide ratio), `battery`, `tone` (a short signal on the
+piezo, no voice), `thermalclimb` (mean climb since the circling began), `thermalgain` (height
 gained since then), `maxg` (peak load factor of the flight or the manoeuvre: the one clip `g/g_23` when
 the device has that series, else "2 dot 3" from single numbers), `bank`
 (bank angle in degrees, a size without a side: after a wingover the peak of the pilot's measured tilt
@@ -230,7 +230,12 @@ Details of the triggers (firmware/src/app/announce.c):
 * Automatic triggers stay silent at the flight level mute and leave out the blocks marked `:ble`
   while a phone is connected; the double tap is a request and ignores both; the summary leaves out
   `:ble` blocks when a phone is connected at power off.
-* `tone` plays the falling three-tone signal on the piezo at its place in the list.
+* `tone` plays its signal on the piezo at its place in the list (0.57; firmware/src/app/sound.c). The names:
+  `tritone_up` (the default: a tritone up, E7 A#7), `octave_leap` (1270 to 2540 Hz), `bi_dup_twice` (a quick
+  two-note flick up, twice), `tick_tock` (two clicks), `chirp_up` (six quick steps up from 2.4 to 4 kHz),
+  `trill`, and lower and about 10 dB quieter on the piezo: `low_octave` (566 to 1132 Hz), `low_bi_dup_twice`,
+  `low_trill`, `tock_tock`, `low_chirp_up`. The option comes after `:ble` (`tone:ble:trill`): firmware before
+  0.57 then still reads `:ble` and plays its old falling three-tone signal.
 * `auto` and `elevation` fire at most every 30 s each; `elevation` measures from the altitude of
   its last announcement (the takeoff at first).
 * `thermalexit` speaks the climb phase that ended (`thermalclimb`, `thermalgain` of that phase);

@@ -108,7 +108,7 @@ Used by the configurator's "Status and tests" view and by the test buttons of th
 | `PIEZO pulse <ns>` | `OK` | pulse of the piezo step "very quiet" (200–16000 ns); stays until the device is switched off |
 | `PIEZO pump <Hz>` | `OK` | charge pump frequency of the piezo step "loud" (5000–500000 Hz); stays until the device is switched off |
 | `TAPSENS <0..4>` | `OK` | double-tap sensitivity (`system_tapsensitivity_int`); stays until the device is switched off |
-| `MELODY <scale\|chromatic\|sighs\|triplet> <vol>` | `OK` | plays one of the power-off melodies on the piezo |
+| `MELODY <name> <vol>` | `OK`; `ERR melody` | plays a power-off melody (`scale`, `chromatic`, `sighs`, `triplet`) or a signal tone of the block `tone` (`tritone_up`, ..., docs/config-ext-format.md; 0.57) on the piezo; a signal tone stops what plays |
 | `ANNOUNCE <trigger> <blocks>` | `OK` | speaks a block list (`altitude:ble,climbrate,...`, the format of `announce_<trigger>_items_string`) with fixed demo values at the ground volume: the configurator's play button next to a trigger. `summary` speaks it as the flight summary. |
 | `PUT voices/custom/[<folder>/]<name>.qoa <size> <crc32>` | `READY` … `DONE <crc32>` | a user-made voice clip (mono 22.05 kHz QOA, at most 24 kB); `<name>` is `[a-z0-9_]`, up to 24 characters, `<folder>` (up to 8) the clip's folder in the pack (`al`, `sp`, `nav`, `time`, `g`, `bank`); folders are created. |
 | `DEL voices/custom/[<folder>/]<name>.qoa` | `OK` | removes such a clip |

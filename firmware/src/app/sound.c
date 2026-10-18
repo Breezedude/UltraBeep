@@ -9,6 +9,7 @@
 #include "semphr.h"
 #include "task.h"
 
+#include "announce.h"
 #include "audio.h"
 #include "board.h"
 #include "health.h"
@@ -47,17 +48,44 @@ static const note_t *const power_off_melodies[SOUND_POWER_OFF_COUNT] = {mel_off_
 static volatile uint8_t power_off_choice;
 static const note_t mel_confirm[] = {{1760, 80, 0}, {0, 40, 0}, {2640, 140, 0}, {0, 0, 0}};
 static const note_t mel_error[] = {{440, 300, 0}, {0, 100, 0}, {330, 500, 0}, {0, 0, 0}};
-static const note_t mel_thermal_exit[] = {{1200, 120, 0}, {0, 40, 0}, {900, 120, 0}, {0, 40, 0}, {600, 280, 0}, {0, 0, 0}};
 static const note_t mel_prompt[] = {{1760, 90, 0}, {0, 70, 0}, {2349, 170, 0}, {0, 0, 0}}; /* A6 up to D7, a question */
 
 static const note_t *const melodies[MELODY_COUNT] = {
   [MELODY_ACK] = mel_ack,           [MELODY_NEXT] = mel_next,       [MELODY_POWER_ON] = mel_power_on,
   [MELODY_POWER_OFF] = mel_off_scale, [MELODY_CONFIRM] = mel_confirm, [MELODY_ERROR] = mel_error,
-  [MELODY_THERMAL_EXIT] = mel_thermal_exit, [MELODY_PROMPT] = mel_prompt,
+  [MELODY_PROMPT] = mel_prompt,
+};
+
+/*
+ * Signal tones of the announcement block "tone", in the order of announce_signal_names (chosen by the user
+ * from synthesised candidates, 2026-10-18). Short and apart from the device's own melodies: no falling steps
+ * (power off), no rising fourths and fifths (power on, confirm, prompt). The high ones sit on the piezo's
+ * resonance (2.4 to 4.1 kHz); the low ones on fundamentals whose 7th (566 Hz), 5th (800) or 3rd harmonic
+ * (1131 to 1270) lands there, about 10 dB quieter.
+ */
+static const note_t sig_tritone_up[] = {{2637, 90, 0}, {0, 25, 0}, {3729, 170, 0}, {0, 0, 0}};
+static const note_t sig_octave_leap[] = {{1270, 70, 0}, {0, 25, 0}, {2540, 170, 0}, {0, 0, 0}};
+static const note_t sig_bi_dup_twice[] = {{3322, 40, 0}, {3951, 60, 0}, {0, 80, 0}, {3322, 40, 0}, {3951, 60, 0}, {0, 0, 0}};
+static const note_t sig_tick_tock[] = {{3800, 25, 0}, {0, 110, 0}, {3000, 25, 0}, {0, 0, 0}};
+static const note_t sig_chirp_up[] = {{2400, 25, 0}, {2700, 25, 0}, {3000, 25, 0}, {3300, 25, 0}, {3650, 25, 0},
+                                      {4000, 25, 0}, {0, 0, 0}};
+static const note_t sig_trill[] = {{3322, 35, 0}, {3951, 35, 0}, {3322, 35, 0}, {3951, 35, 0}, {3322, 35, 0},
+                                   {3951, 35, 0}, {0, 0, 0}};
+static const note_t sig_low_octave[] = {{566, 70, 0}, {0, 25, 0}, {1132, 170, 0}, {0, 0, 0}};
+static const note_t sig_low_bi_dup_twice[] = {{800, 40, 0}, {1200, 60, 0}, {0, 80, 0}, {800, 40, 0}, {1200, 60, 0}, {0, 0, 0}};
+static const note_t sig_low_trill[] = {{566, 40, 0}, {800, 40, 0}, {566, 40, 0}, {800, 40, 0}, {566, 40, 0},
+                                       {800, 40, 0}, {0, 0, 0}};
+static const note_t sig_tock_tock[] = {{800, 30, 0}, {0, 110, 0}, {566, 30, 0}, {0, 0, 0}};
+static const note_t sig_low_chirp_up[] = {{566, 25, 0}, {680, 25, 0}, {800, 25, 0}, {950, 25, 0}, {1131, 25, 0},
+                                          {1270, 25, 0}, {0, 0, 0}};
+
+static const note_t *const signals[ANN_SIGNALS] = {
+  sig_tritone_up, sig_octave_leap, sig_bi_dup_twice, sig_tick_tock, sig_chirp_up, sig_trill,
+  sig_low_octave, sig_low_bi_dup_twice, sig_low_trill, sig_tock_tock, sig_low_chirp_up,
 };
 
 typedef struct {
-  uint8_t kind; /* 0 melody, 1 voice, 2 piezo tone, 3 speaker tone, 4 power-off melody, 5 headphone beep */
+  uint8_t kind; /* 0 melody, 1 voice, 2 piezo tone, 3 speaker tone, 4 power-off melody, 5 headphone beep, 6 signal tone */
   uint8_t id;
   uint8_t level;
   uint8_t count;
@@ -331,6 +359,8 @@ static void sound_task(void *arg)
       play_melody(r.id == MELODY_POWER_OFF ? power_off_melodies[power_off_choice] : melodies[r.id], r.level);
     } else if (r.kind == 4 && r.id < SOUND_POWER_OFF_COUNT) {
       play_melody(power_off_melodies[r.id], r.level);
+    } else if (r.kind == 6 && r.id < ANN_SIGNALS) {
+      play_melody(signals[r.id], r.level);
     } else if (r.kind == 1) {
       play_voice(&r);
     } else if (r.kind == 2) {
@@ -384,6 +414,15 @@ void sound_play_power_off(unsigned index, uint8_t level)
   request_t r = {0};
   r.kind = 4;
   r.id = (uint8_t)(index < SOUND_POWER_OFF_COUNT ? index : 0U);
+  r.level = level;
+  xQueueSend(queue, &r, 0);
+}
+
+void sound_signal(unsigned index, uint8_t level)
+{
+  request_t r = {0};
+  r.kind = 6;
+  r.id = (uint8_t)(index < ANN_SIGNALS ? index : 0U);
   r.level = level;
   xQueueSend(queue, &r, 0);
 }

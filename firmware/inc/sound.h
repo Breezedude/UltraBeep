@@ -17,7 +17,6 @@ typedef enum {
   MELODY_POWER_OFF, /* ~2.5 s, held button switches off at its end */
   MELODY_CONFIRM,
   MELODY_ERROR,
-  MELODY_THERMAL_EXIT, /* falling three tones: the climb phase has ended */
   MELODY_PROMPT,       /* two rising tones: the device asks for a button press (a new phone or browser) */
   MELODY_COUNT
 } melody_t;
@@ -36,6 +35,8 @@ void sound_set_power_off_melody(unsigned index);
 void sound_play_power_off(unsigned index, uint8_t level);
 /* Length of the chosen power-off melody in ms. */
 uint32_t sound_power_off_ms(void);
+/* A signal tone of the announcement block "tone" (announce.h announce_signal_names; out of range: the first). */
+void sound_signal(unsigned index, uint8_t level);
 /* Plays up to SOUND_MAX_CLIPS voice clips in a row (names without path/extension). */
 void sound_say(const char *const *clips, unsigned count, uint8_t level);
 void sound_say1(const char *clip, uint8_t level);

@@ -25,6 +25,11 @@ const char *const announce_matrix_names[MATRIX_ITEMS] = {
   "altitude", "climbrate", "speed", "heading", "duration", "time",
 };
 
+const char *const announce_signal_names[ANN_SIGNALS] = {
+  "tritone_up", "octave_leap", "bi_dup_twice", "tick_tock", "chirp_up", "trill",
+  "low_octave", "low_bi_dup_twice", "low_trill", "tock_tock", "low_chirp_up",
+};
+
 /* Blocks that stay silent while a phone is connected, when nothing else is said (configurator BLOCKS). */
 static bool block_ble_default(announce_block_t b)
 {
@@ -69,20 +74,48 @@ void announce_config_defaults(announce_config_t *c)
   }
 }
 
-static void list_add(announce_list_t *l, announce_block_t b, bool ble)
+/* False when the list is full or has the block already. */
+static bool list_add(announce_list_t *l, announce_block_t b, bool ble)
 {
   if (l->count >= ANN_LIST_MAX) {
-    return;
+    return false;
   }
   for (unsigned i = 0; i < l->count; i++) {
     if (l->block[i] == b) {
-      return; /* each block once */
+      return false; /* each block once */
     }
   }
   if (ble) {
     l->ble_mute |= (uint16_t)(1U << l->count);
   }
   l->block[l->count++] = (uint8_t)b;
+  return true;
+}
+
+/* The words after the block name, each after a ':' ("tone:ble:trill"): "ble", or a signal tone's name. */
+static void parse_options(const char *opt, const char *end, bool *ble, int *signal)
+{
+  while (opt && opt < end) {
+    const char *s = opt + 1;
+    const char *e = memchr(s, ':', (size_t)(end - s));
+    const char *stop = e ? e : end;
+    while (s < stop && *s == ' ') {
+      s++;
+    }
+    size_t n = (size_t)(stop - s);
+    while (n && s[n - 1] == ' ') {
+      n--;
+    }
+    if (n == 3 && strncmp(s, "ble", 3) == 0) {
+      *ble = true;
+    }
+    for (int i = 0; i < ANN_SIGNALS; i++) {
+      if (strlen(announce_signal_names[i]) == n && strncmp(announce_signal_names[i], s, n) == 0) {
+        *signal = i;
+      }
+    }
+    opt = e;
+  }
 }
 
 void announce_list_parse(announce_list_t *l, const char *text)
@@ -103,10 +136,14 @@ void announce_list_parse(announce_list_t *l, const char *text)
     while (name_len && p[name_len - 1] == ' ') {
       name_len--;
     }
-    bool ble = opt && end - opt >= 4 && strncmp(opt + 1, "ble", 3) == 0;
+    bool ble = false;
+    int signal = 0;
+    parse_options(opt, end, &ble, &signal);
     for (int b = 0; b < ANN_BLOCKS; b++) {
       if (strlen(announce_block_names[b]) == name_len && strncmp(announce_block_names[b], p, name_len) == 0) {
-        list_add(l, (announce_block_t)b, ble);
+        if (list_add(l, (announce_block_t)b, ble) && b == ANN_TONE) {
+          l->tone = (uint8_t)signal;
+        }
         break;
       }
     }
@@ -442,7 +479,10 @@ void announce_build(const announce_list_t *l, bool ble_connected, const announce
     if (ble_connected && (l->ble_mute & (1U << i))) {
       continue;
     }
-    build_block((announce_block_t)l->block[i], in, out);
+    unsigned g = out->groups;
+    if (build_block((announce_block_t)l->block[i], in, out) && l->block[i] == ANN_TONE) {
+      out->signal[g] = l->tone < ANN_SIGNALS ? l->tone : 0U;
+    }
   }
 }
 

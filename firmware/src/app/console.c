@@ -9,6 +9,7 @@
 #include "task.h"
 
 #include "analog.h"
+#include "announce.h"
 #include "audio.h"
 #include "backup.h"
 #include "ble_app.h"
@@ -77,7 +78,7 @@ static void cmd_help(void)
                  "  rawlog                      raw data log: file, size, losses\r\n"
                  "  tasks                       stack reserve of each task, the heap's low point (RAM headroom)\r\n"
                  "  say <clip>                  play 1:/voices/<clip>.qoa\r\n"
-                 "  melody <0-5>                play a piezo melody\r\n"
+                 "  melody <0-6>|<signal>       play a piezo melody, or a signal tone by name (tritone_up, ...)\r\n"
                  "  log                         replay the log\r\n"
                  "  dump                        stock bootloader, OTP, option bytes, chip data to 0:/ultrabeep/dump/\r\n"
                  "  update                      install ultrabip*.update from the SD card root\r\n"
@@ -402,7 +403,15 @@ static void execute(char *cmd)
   } else if (strcmp(cmd, "say") == 0 && args[0]) {
     sound_say1(args, 70);
   } else if (strcmp(cmd, "melody") == 0) {
-    sound_melody((melody_t)atoi(args), 60);
+    unsigned s = 0;
+    while (s < ANN_SIGNALS && strcmp(args, announce_signal_names[s]) != 0) {
+      s++;
+    }
+    if (s < ANN_SIGNALS) {
+      sound_signal(s, 60);
+    } else {
+      sound_melody((melody_t)atoi(args), 60);
+    }
   } else if (strcmp(cmd, "log") == 0) {
     if (line_source == SOURCE_BLE) {
       log_replay_ble();

@@ -76,10 +76,11 @@ function legacyItems(n, trig) {
   return lg.items.map((id) => ({ id, ble: BLOCK_BY_ID[id].ble }));
 }
 
+/* "block[:ble][:<signal>]": the signal tone's name only on the block "tone" (SIGNAL_TONES; "" = the default). */
 function parseItems(text) {
   return text.split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
-    const [id, ...opts] = s.split(":");
-    return { id, ble: opts.includes("ble") };
+    const [id, ...opts] = s.split(":").map((p) => p.trim());
+    return { id, ble: opts.includes("ble"), sound: id === "tone" ? opts.find((o) => SIGNAL_BY_ID[o]) || "" : "" };
   }).filter((it) => BLOCK_BY_ID[it.id]);
 }
 
@@ -88,7 +89,9 @@ function readItems(n, trig) {
   return v === undefined ? legacyItems(n, trig) : parseItems(v);
 }
 
-const itemsText = (items) => items.map((it) => (it.ble ? `${it.id}:ble` : it.id)).join(",");
+/* ":ble" before the signal's name: firmware before 0.57 reads only the first option and still mutes the block. */
+const itemsText = (items) => items.map((it) => [it.id, it.ble ? "ble" : "",
+  it.id === "tone" && it.sound && it.sound !== SIGNAL_TONES[0].id ? it.sound : ""].filter(Boolean).join(":")).join(",");
 
 function writeItems(n, trig, items) {
   setP(n, itemsKey(trig), itemsText(items), true);
@@ -335,7 +338,9 @@ async function deviceTest(text) {
   } catch (e) {
     setMessage(e.message.includes("not switched on")
       ? "The device must be switched on (after the profile selection) for tests."
-      : e.message.includes("in flight") ? "No tests in flight." : e.message, true);
+      : e.message.includes("in flight") ? "No tests in flight."
+      : e.message.includes("ERR melody") ? "The device's firmware does not know this sound yet: it needs 0.57 or newer."
+      : e.message, true);
     return false;
   }
 }
@@ -648,6 +653,56 @@ function dragRow(list, row, pointerId, done) {
   handle.addEventListener("pointercancel", up);
 }
 
+/*
+ * A signal tone (SIGNAL_TONES) in the browser: square waves through a rough piezo - its resonance around
+ * 3.8 kHz lifted, the lows cut (low notes are heard through their harmonics, as on the device).
+ */
+let signalAudio = null;
+function playSignalHere(notes) {
+  signalAudio = signalAudio || new (window.AudioContext || window.webkitAudioContext)();
+  const ctx = signalAudio;
+  if (ctx.state === "suspended") ctx.resume();
+  const peak = ctx.createBiquadFilter();
+  peak.type = "peaking";
+  peak.frequency.value = 3800;
+  peak.Q.value = 1.2;
+  peak.gain.value = 12;
+  const low = ctx.createBiquadFilter();
+  low.type = "highpass";
+  low.frequency.value = 1000;
+  const out = ctx.createGain();
+  out.gain.value = 0.06;
+  peak.connect(low).connect(out).connect(ctx.destination);
+  let t = ctx.currentTime + 0.03;
+  for (const [f, ms] of notes) {
+    const d = ms / 1000;
+    if (f) {
+      const osc = ctx.createOscillator();
+      osc.type = "square";
+      osc.frequency.value = f;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(1, t + 0.001);
+      g.gain.setValueAtTime(1, t + d - 0.001);
+      g.gain.linearRampToValueAtTime(0, t + d);
+      osc.connect(g).connect(peak);
+      osc.start(t);
+      osc.stop(t + d + 0.01);
+    }
+    t += d;
+  }
+}
+
+/* A signal tone on the connected device (firmware 0.57, at the ground volume), else in the browser. */
+function playSignal(id) {
+  const s = SIGNAL_BY_ID[id] || SIGNAL_TONES[0];
+  if (deviceClient()) {
+    deviceTest(`MELODY ${s.id} ${state.ext.get("global", "volume_buzzerground_int") || 20}`);
+  } else {
+    playSignalHere(s.notes);
+  }
+}
+
 function triggerCard(n, trig) {
   const enabled = triggerEnabled(n, trig);
   const card = el("section", { class: "trigger" + (enabled ? "" : " off") });
@@ -682,9 +737,25 @@ function triggerCard(n, trig) {
     const box = el("input", { type: "checkbox", "aria-label": `Mute ${block.label} with BLE` });
     box.checked = it.ble;
     box.addEventListener("change", () => { it.ble = box.checked; writeItems(n, trig, items); });
+    /* the signal tone: which one, and a play button (the device when connected, else here) */
+    let picker = null;
+    if (it.id === "tone") {
+      const sel = el("select", { class: "signal", "aria-label": "Which signal tone" },
+        SIGNAL_TONES.map((s, k) => el("option", { value: s.id }, k ? s.label : `${s.label} (default)`)));
+      sel.value = it.sound || SIGNAL_TONES[0].id;
+      sel.addEventListener("change", () => {
+        it.sound = sel.value === SIGNAL_TONES[0].id ? "" : sel.value;
+        writeItems(n, trig, items);
+        playSignal(sel.value);
+      });
+      const hear = el("button", { type: "button", class: "play signal-play",
+        title: deviceClient() ? "Play on the device" : "Play here (an approximation of the piezo)",
+        "aria-label": "Play the signal tone", onclick: () => playSignal(sel.value) }, "▶");
+      picker = el("span", { class: "signal-pick" }, sel, hear);
+    }
     const li = el("tr", { class: "block" },
       el("td", { class: "col-grip" }, grip),
-      el("td", { class: "col-name" }, block.label, block.help ? info(block.help, block.label) : null),
+      el("td", { class: "col-name" }, block.label, block.help ? info(block.help, block.label) : null, picker),
       el("td", { class: "col-ble" }, box),
       el("td", { class: "col-remove" }, el("button", { type: "button", class: "remove", title: "Remove",
         "aria-label": `Remove ${block.label}`, onclick: () => { items.splice(i, 1); commit(); } }, "×")));

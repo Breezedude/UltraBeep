@@ -334,6 +334,7 @@ static void announce_append(const announcement_t *a, uint8_t voice)
   for (unsigned g = 0; g < a->groups && ann_pending.groups < ANN_GROUPS; g++) {
     unsigned d = ann_pending.groups++;
     ann_pending.count[d] = a->count[g];
+    ann_pending.signal[d] = a->signal[g];
     memcpy(ann_pending.clip[d], a->clip[g], sizeof(ann_pending.clip[d]));
   }
   ann_voice = voice;
@@ -355,7 +356,7 @@ static void announce_drain(void)
   }
   unsigned n = ann_pending.count[ann_next];
   if (n == 0) {
-    sound_melody(MELODY_THERMAL_EXIT, system_piezo());
+    sound_signal(ann_pending.signal[ann_next], system_piezo());
     ann_next++;
     return;
   }
