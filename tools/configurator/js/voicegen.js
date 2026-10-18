@@ -96,6 +96,11 @@ function renderVoicepack() {
     else delete draft.overrides[name];
     savePackDraft(packId, draft);
   };
+  /* What a generated clip is made of besides the sound (pitch, rate and the band-pass are applied here, live): the
+   * voice, the text, the language and the take. A clip made of others - another voice chosen since, a text changed -
+   * is out of date: it counts as missing, and Generate makes it again. */
+  const madeOf = (text, opt) => `${settings.voice}|${text}|${opt.language || ""}|${opt.variant || 0}`;
+  const upToDate = (name) => G.has(name) && G.get(name).madeOf === madeOf(textFor(name), clipOpt(name));
 
   /* ---- the voice pack ---- */
   const packField = SYSTEM_GROUPS.flatMap((g) => g.fields).find((f) => f.key === "system_language_string");
@@ -234,8 +239,9 @@ function renderVoicepack() {
     try {
       for (let i = 0; i < names.length; i++) {
         status.textContent = `Sample: ${i + 1} of ${names.length} (${names[i]}) …`;
-        G.set(names[i], await generateClip(textFor(names[i]), settings, 1, 5,
-          { ...clipOpt(names[i]), onWait: waiting(status, `Sample ${i + 1} of ${names.length}`) }));
+        const sig = madeOf(textFor(names[i]), clipOpt(names[i]));
+        G.set(names[i], Object.assign(await generateClip(textFor(names[i]), settings, 1, 5,
+          { ...clipOpt(names[i]), onWait: waiting(status, `Sample ${i + 1} of ${names.length}`) }), { madeOf: sig }));
         sample.push(names[i]);
       }
       status.textContent = `Sample: ${names.length} clips as the device plays them - "${names.map(textFor).join(" · ")}". ` +
@@ -252,7 +258,7 @@ function renderVoicepack() {
   sampleStop.addEventListener("click", stopPlaying);
 
   /* a voice with defaults (a template from Custom speaker) brings its pitch, rate and band-pass along */
-  picker.voiceSel.addEventListener("change", () => {
+  const voiceChanged = () => {
     const v = picker.current();
     if (v && v.defaults) {
       Object.assign(settings, v.defaults);
@@ -262,8 +268,10 @@ function renderVoicepack() {
     }
     packInfo();
     edRefresh();        /* "Spoken in" works with Chatterbox voices only */
-    renderCatalogue();
-  });
+    renderCatalogue();  /* the clips of the voice before are out of date */
+  };
+  picker.voiceSel.addEventListener("change", voiceChanged);
+  picker.langSel.addEventListener("change", voiceChanged); /* the picker has chosen a voice of that language */
   picker.ready.then(() => { packInfo(); edRefresh(); });
 
   /* ---- the clip to generate ---- */
@@ -319,8 +327,9 @@ function renderVoicepack() {
       ? `The voice line of profile ${profile} (${getP(profile, CUSTOM_NAME_KEY, true) || "custom name"}): stored as voices/custom/${name}.qoa ` +
         "and noted in the profile when you send it."
       : "";
-    edStatus.textContent = G.has(name) ? "Generated in this session: play, send or generate again."
-      : canGenerate || text ? "" : `No ${packName} text for this clip yet: type the words to speak.`;
+    edStatus.textContent = upToDate(name) ? "Generated in this session: play, send or generate again."
+      : G.has(name) ? "Generated in this session with another voice or text: generate it again."
+        : canGenerate || text ? "" : `No ${packName} text for this clip yet: type the words to speak.`;
     edRefresh();
     clipHead.scrollIntoView({ block: "start", behavior: "smooth" });
     textInput.focus();
@@ -335,9 +344,10 @@ function renderVoicepack() {
     const variant = homeVoice(settings.voice) ? edVariant : 0;
     edStatus.textContent = `Asking the voice service${variant ? ` for variant ${variant}` : ""} …`;
     try {
-      const c = await generateClip(text, settings, 1, CLIP_MAX_S, { ...clipOpt(name, edLang.value, variant),
-        onWait: waiting(edStatus, "Generating") });
-      G.set(name, c);
+      const opt = clipOpt(name, edLang.value, variant);
+      const sig = madeOf(text, opt);
+      const c = await generateClip(text, settings, 1, CLIP_MAX_S, { ...opt, onWait: waiting(edStatus, "Generating") });
+      G.set(name, Object.assign(c, { madeOf: sig }));
       /* text, language and take stay with the pack */
       if (!edProfile) {
         noteText(name, text);
@@ -407,85 +417,124 @@ function renderVoicepack() {
     setMessage(`Audio generator settings saved${state.source && state.source.kind === "ble" ? " on the device" : ""}: ` +
       "every browser that opens this configuration uses them.");
   });
-  const countGenerated = () => voicepackClips(catalogLang).filter((c) => G.has(c.name)).length;
+  const countGenerated = () => voicepackClips(catalogLang).filter((c) => upToDate(c.name)).length;
   const packInfo = () => {
     if (!canGenerate) { packStatus.textContent = `No ${packName} texts yet: the whole pack cannot be generated.`; return; }
+    if (generating) return; /* the progress stays */
     const all = voicepackClips(catalogLang).length;
     const have = countGenerated();
     const ext = voicepackClips(catalogLang).filter((c) => c.stock === false);
     const v = picker.current();
     const slow = v && v.provider === "chatterbox" && have < all;
-    packStatus.textContent = `${have} of ${all} clips of the ${textsName} pack generated in this session ` +
-      `(${ext.filter((c) => G.has(c.name)).length} of the ${ext.length} extension clips the original pack lacks).` +
+    packStatus.textContent = `${have} of ${all} clips of the ${textsName} pack generated with this voice in this session ` +
+      `(${ext.filter((c) => upToDate(c.name)).length} of the ${ext.length} extension clips the original pack lacks).` +
       (slow ? ` A Chatterbox voice takes about ${v.seconds} s per clip not made before - up to ` +
         `${Math.max(1, Math.round(((all - have) * v.seconds) / 60))} min for the rest; clips made already come at once.` : "");
     buildBtn.textContent = have === all ? `Build ${pack.id}.ubpack` : `Build ${pack.id}.ubpack (${all - have} missing)`;
   };
-  /* Generates a list of clips, two at a time: the whole pack, or the extension clips from the catalogue. */
-  const runGeneration = async (clips, what) => {
+  /* One list at a time: both Generate buttons wait while one runs (the voice server makes two clips at once), the
+   * extension clips' also while they are sent (the two share the progress line). */
+  let generating = false, sending = false;
+  const genButtons = () => {
+    allBtn.disabled = generating || !canGenerate;
+    const missing = voicepackClips(catalogLang).filter((c) => c.stock === false && !upToDate(c.name)).length;
+    extGen.disabled = generating || sending || !canGenerate || !missing;
+    extGen.textContent = missing && !generating ? `Generate (${missing})` : "Generate";
+    extGen.title = !canGenerate ? `No ${packName} texts yet` : generating ? "A generation is running"
+      : missing ? `Generate the ${missing} extension clips not made with this voice and text yet`
+        : "Every extension clip is generated with this voice: choose another voice or change a text to make them again";
+  };
+  const minutes = (s) => (s < 90 ? `${Math.max(1, Math.round(s))} s` : `${Math.round(s / 60)} min`);
+  /*
+   * Generates a list of clips, two at a time: the whole pack, or the extension clips from the catalogue. ui: where the
+   * progress goes {status, bar, stop, errors}; the catalogue follows while it runs.
+   */
+  const runGeneration = async (clips, what, ui) => {
+    if (generating) return;
     if (!picker.voiceSel.value) { setMessage("Choose a voice first.", true); return; }
-    if (!clips.length) { packStatus.textContent = `Nothing to do: ${what} are generated.`; return; }
+    if (!clips.length) { ui.status.textContent = `Nothing to do: ${what} are generated with this voice.`; return; }
     const count = clips.length;
     genCancel = false;
-    allBtn.disabled = true;
-    stopBtn.hidden = false;
-    bar.hidden = false;
-    errors.textContent = "";
+    generating = true;
+    genButtons();
+    ui.stop.hidden = false;
+    ui.bar.hidden = false;
+    ui.bar.value = 0;
+    ui.errors.textContent = "";
+    ui.status.textContent = `Generating ${what}: 0 of ${count}, asking the voice service …`;
     const failed = [];
     const retried = new Set(); /* a clip the service refused once goes to the end of the queue once more */
-    let done = 0;
+    let done = 0, shown = 0;
     const t0 = Date.now();
     const worker = async () => {
       while (clips.length && !genCancel) {
         const clip = clips.shift();
         try {
           /* pack clips may be longer than Bluetooth ones; on the voice server they wait behind single clips */
-          G.set(clip.name, await generateClip(textFor(clip.name), settings, 1, 5, { ...clipOpt(clip.name), bulk: true }));
+          const sig = madeOf(textFor(clip.name), clipOpt(clip.name));
+          G.set(clip.name, Object.assign(await generateClip(textFor(clip.name), settings, 1, 5, { ...clipOpt(clip.name), bulk: true }),
+            { madeOf: sig }));
         } catch (e) {
           if (e.status === 429) { genCancel = true; failed.push("Rate limit of the service reached: raise RATE_LIMIT in the relay's .env for a whole pack."); }
           else if (e.status !== 400 && !retried.has(clip.name)) { retried.add(clip.name); clips.push(clip); continue; }
           failed.push(`${clip.name}: ${e.message}`);
         }
         done++;
-        bar.value = Math.round(100 * done / count);
+        ui.bar.value = Math.round(100 * done / count);
         const s = (Date.now() - t0) / 1000;
-        packStatus.textContent = `Generating ${what}: ${done} of ${count} (${(done / Math.max(s, 1) * 60).toFixed(0)} per minute)`;
+        const left = done < count ? `, about ${minutes((s / done) * (count - done))} left` : "";
+        ui.status.textContent = `Generating ${what}: ${done} of ${count} (${(done / Math.max(s, 1) * 60).toFixed(0)} per minute${left})` +
+          (failed.length ? `, ${failed.length} failed` : "");
+        if (Date.now() - shown > 1000) { shown = Date.now(); renderCatalogue(); } /* the rows turn green as they come */
       }
     };
     await Promise.all([worker(), worker()]);
-    bar.hidden = true;
-    stopBtn.hidden = true;
-    allBtn.disabled = false;
-    if (failed.length) errors.textContent = `${failed.length} failed: ${failed.slice(0, 5).join("; ")}${failed.length > 5 ? " …" : ""}`;
+    generating = false;
+    ui.bar.hidden = true;
+    ui.stop.hidden = true;
+    const made = done - failed.length;
+    ui.status.textContent = `${genCancel ? "Stopped" : "Done"}: ${made} of ${count} ${what} generated in ` +
+      `${minutes((Date.now() - t0) / 1000)}${failed.length ? `, ${failed.length} failed` : ""}.`;
+    if (failed.length) ui.errors.textContent = `${failed.length} failed: ${failed.slice(0, 5).join("; ")}${failed.length > 5 ? " …" : ""}`;
     packInfo();
     renderCatalogue();
   };
-  allBtn.addEventListener("click", () => runGeneration(voicepackClips(catalogLang).filter((c) => !G.has(c.name)), "the pack's clips"));
+  allBtn.addEventListener("click", () => runGeneration(voicepackClips(catalogLang).filter((c) => !upToDate(c.name)), "clips of the pack",
+    { status: packStatus, bar, stop: stopBtn, errors }));
   /* Sends generated clips to the device, as single files in voices/custom. */
   const sendClips = async (clips) => {
     const client = deviceClient();
     if (!client || !clips.length) return;
     let n = 0;
+    sending = true;
+    extSend.disabled = true;
+    genButtons();
+    extBar.hidden = false;
+    extErrors.textContent = "";
     try {
       for (const c of clips) {
-        extNote.textContent = `Sending ${c.name} (${n + 1} of ${clips.length}) …`;
+        extStatus.textContent = `Sending ${c.name} (${n + 1} of ${clips.length}) …`;
+        extBar.value = Math.round((100 * n) / clips.length);
         await client.putBytes(customPath(c.name), clipBytes(G.get(c.name)));
         n++;
       }
-      setMessage(`${n} clips stored in voices/custom on the device; it uses them instead of the pack's.`);
+      extStatus.textContent = `${n} clips stored in voices/custom on the device; it uses them instead of the pack's.`;
+      setMessage(extStatus.textContent);
     } catch (e) {
-      setMessage(`${e.message} (${n} of ${clips.length} sent)`, true);
+      extStatus.textContent = `${e.message} (${n} of ${clips.length} sent)`;
+      setMessage(extStatus.textContent, true);
     }
+    sending = false;
+    extBar.hidden = true;
     refreshDevice();
     renderCatalogue();
   };
   stopBtn.addEventListener("click", () => { genCancel = true; });
-  /* The .ubpack of the clips generated in this session, with the settings as they are now: {image, clips}. */
+  /* The .ubpack of the clips generated in this session with this voice, with the settings as they are now: {image, clips}. */
   const buildImage = () => {
     const files = [];
     for (const c of voicepackClips(catalogLang)) {
-      const g = G.get(c.name);
-      if (g) files.push({ path: packPath(c.name), bytes: clipBytes(g) });
+      if (upToDate(c.name)) files.push({ path: packPath(c.name), bytes: clipBytes(G.get(c.name)) });
     }
     if (!files.length) throw new Error("Nothing generated yet.");
     const date = new Date().toISOString().slice(0, 10);
@@ -601,31 +650,63 @@ function renderVoicepack() {
   /* ---- the clips on the device ---- */
   const devBody = el("tbody", {});
   const devNote = el("p", { class: "sub" }, deviceClient() ? "Loading …" : "Connect via Bluetooth to see the clips on the device.");
+  let devList = []; /* the files of voices/custom: {name, size} */
+  const devExpanded = new Set();
+  const devRow = (f) => {
+    const name = f.name.replace(/\.qoa$/, "");
+    return el("tr", {},
+      el("td", { class: "mono" }, f.name),
+      el("td", {}, `${(f.size / 1024).toFixed(1)} kB`),
+      el("td", { class: "actions" },
+        el("button", { class: "play", type: "button", title: "Play on the device", onclick: () => deviceTest(`SAY ${name} ${playVolume()}`) }, "▶"),
+        el("button", { class: "play", type: "button", title: "Edit: generate it again", onclick: () => edit(name) }, "✎"),
+        el("button", { class: "play danger", type: "button", title: "Delete from the device", onclick: async () => {
+          const client = deviceClient();
+          if (!client || !window.confirm(`Delete ${f.name} from the device? The pack's clip of that name is used again.`)) return;
+          try {
+            await client.deleteFile(customPath(name));
+            setMessage(`${f.name} deleted.`);
+            refreshDevice();
+          } catch (e) { setMessage(e.message, true); }
+        } }, "🗑")));
+  };
+  /* the family of a clip, folded into one row like the catalogue's series: the numbers of one name (g/g_23,
+   * vario_sink_150, al/al_1230) or the wind's directions (nav/from_w); null for a clip of its own */
+  const familyOf = (name) => (name.startsWith("nav/from_") ? "nav/from" : seriesKey(name));
+  const renderDevice = () => {
+    const families = new Map();
+    for (const f of devList) {
+      const k = familyOf(f.name.replace(/\.qoa$/, ""));
+      if (k) (families.get(k) || families.set(k, []).get(k)).push(f);
+    }
+    const rows = [];
+    for (const f of devList) {
+      const k = familyOf(f.name.replace(/\.qoa$/, ""));
+      const family = k ? families.get(k) : null;
+      if (!family || family.length < 3) { rows.push(devRow(f)); continue; }
+      if (family[0] !== f) continue; /* the family's row stands where its first clip would */
+      const open = devExpanded.has(k);
+      const kb = family.reduce((sum, x) => sum + x.size, 0) / 1024;
+      rows.push(el("tr", { class: "group" },
+        el("td", { class: "mono" }, el("button", { class: "fold", type: "button", "aria-expanded": String(open),
+          onclick: () => { if (open) devExpanded.delete(k); else devExpanded.add(k); renderDevice(); } }, open ? "▾" : "▸"),
+        ` ${family[0].name} … ${family[family.length - 1].name}`),
+        el("td", {}, `${family.length} clips, ${kb < 1024 ? `${kb.toFixed(0)} kB` : `${(kb / 1024).toFixed(1)} MB`}`),
+        el("td", { class: "actions" })));
+      if (open) rows.push(...family.map(devRow));
+    }
+    devBody.replaceChildren(...rows);
+  };
   const refreshDevice = async () => {
     const client = deviceClient();
     if (!client) return;
     try {
-      const list = (await client.listTracks("voices/custom")).sort((a, b) => a.name.localeCompare(b.name));
+      /* numbers in their order: g/g_2 before g/g_10 */
+      devList = (await client.listTracks("voices/custom")).sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
       deviceClips.clear();
-      for (const f of list) deviceClips.add(f.name.replace(/\.qoa$/, ""));
-      devBody.replaceChildren(...list.map((f) => {
-        const name = f.name.replace(/\.qoa$/, "");
-        return el("tr", {},
-          el("td", { class: "mono" }, f.name),
-          el("td", {}, `${(f.size / 1024).toFixed(1)} kB`),
-          el("td", { class: "actions" },
-            el("button", { class: "play", type: "button", title: "Play on the device", onclick: () => deviceTest(`SAY ${name} ${playVolume()}`) }, "▶"),
-            el("button", { class: "play", type: "button", title: "Edit: generate it again", onclick: () => edit(name) }, "✎"),
-            el("button", { class: "play danger", type: "button", title: "Delete from the device", onclick: async () => {
-              if (!window.confirm(`Delete ${f.name} from the device? The pack's clip of that name is used again.`)) return;
-              try {
-                await client.deleteFile(customPath(name));
-                setMessage(`${f.name} deleted.`);
-                refreshDevice();
-              } catch (e) { setMessage(e.message, true); }
-            } }, "🗑")));
-      }));
-      devNote.textContent = list.length ? `${list.length} clips in voices/custom.` : "No clips in voices/custom: the device uses the pack only.";
+      for (const f of devList) deviceClips.add(f.name.replace(/\.qoa$/, ""));
+      renderDevice();
+      devNote.textContent = devList.length ? `${devList.length} clips in voices/custom.` : "No clips in voices/custom: the device uses the pack only.";
       edRefresh();
       renderCatalogue(); /* the ▶ buttons follow what the device has */
     } catch (e) {
@@ -645,10 +726,16 @@ function renderVoicepack() {
   const extNote = el("p", { class: "sub" }, "");
   const stockNote = el("p", { class: "sub" }, "");
   const extGen = el("button", { type: "button", title: "Generate the missing extension clips" }, "Generate");
+  const extStop = el("button", { type: "button", hidden: true }, "Stop");
   const extSend = el("button", { type: "button", title: "Send the generated extension clips to the device (voices/custom)" }, "Send to device");
+  /* the progress of "Generate" right under its button */
+  const extBar = el("progress", { max: 100, value: 0, hidden: true });
+  const extStatus = el("p", { class: "sub voice-status" }, "");
+  const extErrors = el("p", { class: "warn-text" }, "");
+  extStop.addEventListener("click", () => { genCancel = true; });
   /* number series ("al/al_-100 … al/al_7000", the hours, the speeds, the load factors) fold into one row each; the words come first */
   const expanded = new Set();
-  const clipRow = (c) => el("tr", { class: G.has(c.name) ? "done" : "" },
+  const clipRow = (c) => el("tr", { class: upToDate(c.name) ? "done" : "" },
     el("td", { class: "mono" }, c.name),
     el("td", {}, textFor(c.name), draft.overrides[c.name] ? el("small", { class: "unit", title: `catalogue: ${c.text}` }, " (changed)") : null,
       variantFor(c.name) ? el("small", { class: "unit", title: "another take of this text (Variant in the editor)" }, ` · variant ${variantFor(c.name)}`) : null),
@@ -678,7 +765,7 @@ function renderVoicepack() {
     const series = [...groups.entries()].filter(([, list]) => numeric(list));
     const rows = words.map(clipRow);
     for (const [key, list] of series) {
-      const have = list.filter((c) => G.has(c.name)).length;
+      const have = list.filter((c) => upToDate(c.name)).length;
       /* extension clips: how many voices/custom on the device has */
       const sent = deviceClient() && list[0].stock === false ? list.filter((c) => deviceClips.has(c.name)).length : 0;
       const open = expanded.has(key);
@@ -701,14 +788,14 @@ function renderVoicepack() {
     /* the extension clips */
     const extShown = q ? ext.filter((c) => matches(c, q)) : ext;
     extBody.replaceChildren(...(q ? extShown.map(clipRow) : folded(ext).rows));
-    const extDone = ext.filter((c) => G.has(c.name)).length;
+    const extDone = ext.filter((c) => upToDate(c.name)).length;
     const extOnDevice = ext.filter((c) => deviceClips.has(c.name)).length;
     extNote.textContent = (q ? `${extShown.length} of ${ext.length} match; ` : "") +
-      `${extDone} of ${ext.length} generated in this session` +
+      `${extDone} of ${ext.length} generated with this voice in this session` +
       (deviceClient() ? `, ${extOnDevice} of ${ext.length} on the device (voices/custom).` : ".");
-    extGen.disabled = !canGenerate || extDone === ext.length;
+    genButtons();
     extSend.hidden = !deviceClient();
-    extSend.disabled = !deviceClient() || !extDone;
+    extSend.disabled = !deviceClient() || !extDone || generating || sending;
     /* the original pack's clips */
     if (q) {
       const rows = stock.filter((c) => matches(c, q));
@@ -723,8 +810,9 @@ function renderVoicepack() {
       `${textsName}${canGenerate ? "" : ` (no ${packName} texts yet)`}.`;
   };
   filter.addEventListener("input", renderCatalogue);
-  extGen.addEventListener("click", () => runGeneration(voicepackClips(catalogLang).filter((c) => c.stock === false && !G.has(c.name)), "the extension clips"));
-  extSend.addEventListener("click", () => sendClips(voicepackClips(catalogLang).filter((c) => c.stock === false && G.has(c.name))));
+  extGen.addEventListener("click", () => runGeneration(voicepackClips(catalogLang).filter((c) => c.stock === false && !upToDate(c.name)),
+    "extension clips", { status: extStatus, bar: extBar, stop: extStop, errors: extErrors }));
+  extSend.addEventListener("click", () => sendClips(voicepackClips(catalogLang).filter((c) => c.stock === false && upToDate(c.name))));
   const clipTable = (body) => el("div", { class: "scroll-x" }, el("table", { class: "cliplist" },
     el("thead", {}, el("tr", {}, el("th", {}, "Clip"), el("th", {}, "Text"), el("th", {}, ""))), body));
   const catalogueCard = fieldset({ title: "Clips", help: "What a voice pack has and what it says in the language of the " +
@@ -736,8 +824,8 @@ function renderVoicepack() {
       "the device, or build a whole pack - and the clips of the original pack. The filter works in both. ▶ plays a clip " +
       "the device has (the pack's, or one sent to voices/custom), ♪ a clip generated here, ✎ opens it in the editor." },
   customRow("Filter", filter),
-  el("div", { class: "subhead" }, "UltraBeep extension clips", el("span", { class: "spacer" }), extGen, extSend),
-  extNote, clipTable(extBody),
+  el("div", { class: "subhead" }, "UltraBeep extension clips", el("span", { class: "spacer" }), extGen, extStop, extSend),
+  extBar, extStatus, extErrors, extNote, clipTable(extBody),
   el("div", { class: "subhead" }, "Clips of the original pack"),
   stockNote, clipTable(stockBody));
   renderCatalogue();
