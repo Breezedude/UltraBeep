@@ -394,6 +394,9 @@ static bool on_key(void *ctx, const char *section, const char *key, const char *
     } else if (strcmp(key, "system_gpsrate_int") == 0) {
       int v = atoi(value);
       c->gps_rate = (uint8_t)(v == 1 ? 1 : 5); /* 10 is gone: the module computed only 5 fixes per second there */
+    } else if (strcmp(key, "system_gpsfallback_int") == 0) {
+      long v = atol(value);
+      c->gps_fallback_utc = v > 0 ? (uint32_t)v : 0U;
     } else if (strcmp(key, "system_gpssystems_string") == 0) {
       c->gps_systems = strcmp(value, "gps+glonass") == 0 ? GPS_SYSTEMS_GPS_GLONASS
                        : strcmp(value, "gps") == 0 ? GPS_SYSTEMS_GPS : GPS_SYSTEMS_ALL;
@@ -648,6 +651,14 @@ bool config_save_app_secrets(const char *list)
 {
   snprintf(active.app_secrets, sizeof(active.app_secrets), "%s", list);
   return save_ext_global("biplink_secrets_string", list);
+}
+
+bool config_save_gps_fallback(uint32_t utc)
+{
+  char value[12];
+  snprintf(value, sizeof(value), "%lu", (unsigned long)utc);
+  active.gps_fallback_utc = utc;
+  return save_ext_global("system_gpsfallback_int", value);
 }
 
 bool config_save_flight_level(level_t level)

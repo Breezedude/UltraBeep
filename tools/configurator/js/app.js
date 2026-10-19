@@ -1359,8 +1359,22 @@ function renderSystem() {
     applyRequires(grp.fields, rows, read);
     return card;
   });
+  /* 5 Hz failed on this device (firmware 0.59 stores the flag): it runs at 1 Hz whatever the rate says, until tried again */
+  const fellBack = parseInt(g("system_gpsfallback_int") || "0", 10);
+  const gpsFallback = fellBack > 0 ? el("div", { class: "gps-fallback" },
+    el("p", { class: "warn-text" }, `GPS at 1 fix per second: 5 per second did not run cleanly on this device - ` +
+      `${fellBack > 1 ? `on ${new Date(fellBack * 1000).toISOString().slice(0, 10)} ` : ""}the GNSS module restarted itself ` +
+      "twice at 5 Hz, so the device switched to 1 Hz and starts with it every time, whatever the setting below says. " +
+      "1 Hz is what the original firmware uses; the IGC data records come once per second then."),
+    el("div", { class: "buttons" }, el("button", { type: "button", title: "Clear the flag: the next start (or Apply now) tries 5 Hz again, " +
+      "and the device falls back again if the module still restarts", onclick: () => {
+      state.ext.set("global", "system_gpsfallback_int", "0");
+      refreshStatus();
+      renderSystem();
+    } }, "Try 5 Hz again"))) : null;
   const sensors = fieldset({ title: "Sensors", help: "Device-wide sensor settings in config_ext.ultrabip; they " +
       "apply at the next power on." },
+  gpsFallback,
   shown(SENSOR_FIELDS).map((f) => row(f, g(f.key), (v) => { state.ext.set("global", f.key, v); refreshStatus(); })),
   calibrationCard());
   /* the note for a finder: free text, a file on the card */

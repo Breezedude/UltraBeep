@@ -294,6 +294,10 @@ table.packlist td small { display: inline; }
 .work-tag.changed { color: var(--warn); font-weight: 600; }
 .work-tag.new { color: var(--accent); font-weight: 600; }
 .work-info { margin: 8px 0 4px; }
+/* 5 Hz failed on the device: the note above the sensor settings */
+.gps-fallback { margin: 4px 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--warn-soft); }
+.gps-fallback .warn-text { margin: 0; }
+.gps-fallback .buttons { margin-top: 8px; }
 .work-info .warn-text { margin-top: 2px; }
 .work-info button { margin-top: 6px; }
 

@@ -664,6 +664,25 @@ static const char *bool_text(bool v)
   return v ? "true" : "false";
 }
 
+/* The GNSS rate in use: the configured one, unless 5 Hz failed on this device before (system_gpsfallback_int). */
+static unsigned gps_rate_used(const config_t *c)
+{
+  return c->gps_fallback_utc ? 1U : c->gps_rate;
+}
+
+/* The GNSS module failed twice at 5 Hz and runs at 1 Hz now: the info flag goes into config_ext.ultrabip, so the
+ * next power-on starts at 1 Hz and the configurator shows why. */
+static void check_gps_fallback(void)
+{
+  if ((state != ST_ON && state != ST_PROFILE) || !gps_take_rate_fallback()) {
+    return;
+  }
+  uint32_t utc = rtc_time_valid() ? rtc_time_unix() : 1U; /* 1: some time, unknown */
+  bool ok = config_save_gps_fallback(utc);
+  log_printf("GPS: 5 Hz failed on this device - 1 Hz from now on%s", ok ? " (stored)" : ", NOT stored");
+  rawlog_event("gps rate fallback %s: system_gpsfallback_int=%lu", ok ? "stored" : "not stored", (unsigned long)utc);
+}
+
 static void log_device_settings(void)
 {
   const config_t *c = config_get();
@@ -675,9 +694,10 @@ static void log_device_settings(void)
            c->hw_version[0] ? c->hw_version : "-", (unsigned long)((RTC->BKP14R >> 16) & 0xFFU),
            c->stock_fw_version[0] ? c->stock_fw_version : "-", FW_VERSION);
   rawlog_settings(s);
-  snprintf(s, SETTINGS_TEXT, "sensors system_barorate_int=%u system_gpsrate_int=%u system_gpssystems_string=%s accel_calibration=%s",
-           c->baro_rate, c->gps_rate, systems[c->gps_systems < 3U ? c->gps_systems : 0U],
-           c->accel_cal_from_file ? "file" : "factory");
+  snprintf(s, SETTINGS_TEXT, "sensors system_barorate_int=%u system_gpsrate_int=%u system_gpsfallback_int=%lu gps_rate_used=%u "
+           "system_gpssystems_string=%s accel_calibration=%s",
+           c->baro_rate, c->gps_rate, (unsigned long)c->gps_fallback_utc, gps_rate_used(c),
+           systems[c->gps_systems < 3U ? c->gps_systems : 0U], c->accel_cal_from_file ? "file" : "factory");
   rawlog_settings(s);
   snprintf(s, SETTINGS_TEXT, "recording flight_recordigc_bool=%s flight_recordkml_bool=%s flight_recordrate_int=%u",
            bool_text(c->record_igc), bool_text(c->record_kml), c->record_hz);
@@ -891,7 +911,7 @@ static void power_on(bool melody, bool select_profile)
   /* sensor settings before the sensors start: no restart for a barometer rate */
   sensors_set_baro_rate(config_get()->baro_rate);
   sensors_set_accel_calibration(config_get()->accel_offset, config_get()->accel_scale);
-  gps_set_rate(config_get()->gps_rate);
+  gps_set_rate(gps_rate_used(config_get()));
   gps_set_systems(config_get()->gps_systems);
   gps_start(GPS_START_AUTO); /* search satellites while the profile is chosen */
   sensors_start();           /* the vertical filter settles meanwhile */
@@ -1183,7 +1203,8 @@ static void check_config_update(void)
     return;
   }
   const config_t *c = config_get();
-  uint8_t gps_rate = c->gps_rate, gps_systems = c->gps_systems;
+  unsigned gps_rate = gps_rate_used(c);
+  uint8_t gps_systems = c->gps_systems;
   char language[sizeof(c->language)];
   snprintf(language, sizeof(language), "%s", c->language);
   log_printf("Config: %s - reloading", from_app ? "new file from BipLink" : "the configurator asked to apply it");
@@ -1196,8 +1217,8 @@ static void check_config_update(void)
   sound_set_power_off_melody(c->power_off_melody);
   sensors_set_baro_rate(c->baro_rate); /* restarts the sensors itself when the rate changed */
   sensors_set_accel_calibration(c->accel_offset, c->accel_scale);
-  if (c->gps_rate != gps_rate || c->gps_systems != gps_systems) {
-    gps_set_rate(c->gps_rate);
+  if (gps_rate_used(c) != gps_rate || c->gps_systems != gps_systems) {
+    gps_set_rate(gps_rate_used(c)); /* "Try 5 Hz again" in the configurator clears the fallback flag */
     gps_set_systems(c->gps_systems);
     gps_start(GPS_START_AUTO);
   }
@@ -2040,6 +2061,7 @@ static void system_task(void *arg)
     if (state == ST_ON) {
       announce_drain();
     }
+    check_gps_fallback();
   }
 }
 

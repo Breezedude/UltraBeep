@@ -72,6 +72,9 @@ void gps_start(gps_start_t mode);
 void gps_stop(void);
 /* Fixes per second from the next start on: 5 (default) or 1 (system_gpsrate_int); more counts as 5. */
 void gps_set_rate(unsigned hz);
+/* True once after the module failed twice at 5 Hz in this power-on (restarted itself or went silent) and was set to
+ * 1 Hz: the caller stores the info flag (system_gpsfallback_int), so the next power-on starts at 1 Hz. */
+bool gps_take_rate_fallback(void);
 /* Satellite systems to ask for (system_gpssystems_string), at the next start. */
 typedef enum { GPS_SYSTEMS_ALL = 0, GPS_SYSTEMS_GPS_GLONASS = 1, GPS_SYSTEMS_GPS = 2 } gps_systems_t;
 void gps_set_systems(uint8_t systems);

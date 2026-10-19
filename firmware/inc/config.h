@@ -101,6 +101,8 @@ typedef struct {
   uint8_t takeoff_climb_s;             /* flight_takeoffclimbtime_int: ... held this long */
   uint8_t baro_rate;                   /* system_barorate_int: barometer samples per second (32, 64, 100) */
   uint8_t gps_rate;                    /* system_gpsrate_int: 1 or 5 fixes per second (10 is read as 5) */
+  uint32_t gps_fallback_utc;           /* system_gpsfallback_int: when 5 Hz failed on this device (0 = never): it
+                                          runs at 1 Hz until the configurator clears the flag */
   uint8_t gps_systems;                 /* system_gpssystems_string: gps_systems_t (all, gps+glonass, gps) */
   float accel_offset[3];               /* imu_accoffset_x/y/z_int [mm/s²]: a = (raw - offset) * scale */
   float accel_scale[3];                /* imu_accscale_x/y/z_int [ppm of 1] */
@@ -126,6 +128,8 @@ bool config_save_flight_level(level_t level);
 bool config_save_accel_calibration(const float offset[3], const float scale[3]);
 /* Stores the list of confirmed BipLink secrets (biplink.c). */
 bool config_save_app_secrets(const char *list);
+/* Stores the info flag that 5 Hz failed on this device (gps_take_rate_fallback), with the time it happened. */
+bool config_save_gps_fallback(uint32_t utc);
 /* Copies ultrabeep/if_found.txt to IF_FOUND_PLEASE_READ.txt in the top folder when it has text, removes the
  * copy when it has none. System task only (the config file buffer); other tasks ask for it. */
 void config_mirror_if_found(void);

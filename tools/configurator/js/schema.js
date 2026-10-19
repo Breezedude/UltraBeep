@@ -300,7 +300,9 @@ const SENSOR_FIELDS = [
     options: [["5", "5 per second"], ["1", "1 per second"]], aliases: { 10: "5" },
     help: "The positioning rate asked of the GNSS module. 5 per second feeds the enhanced IGC data; 1 per " +
       "second as the stock firmware. There is no 10 any more: the module computed only 5 real fixes per second " +
-      "there, at irregular intervals; a file with 10 runs at 5." },
+      "there, at irregular intervals; a file with 10 runs at 5. Should the module restart itself twice at 5 per " +
+      "second in one power-on (seen on a board v1.0 device), firmware 0.59 switches to 1 per second and keeps it, " +
+      "with a note above, until \"Try 5 Hz again\"." },
   { key: "system_gpssystems_string", label: "Satellite systems", type: "select", def: "all", level: "dev",
     options: [["all", "All the module accepts (GPS, GLONASS, SBAS, QZSS)"], ["gps+glonass", "GPS and GLONASS"], ["gps", "GPS only"]],
     help: "Fewer systems: less load on the module, a slower first fix and a worse HDOP. Applies at the " +

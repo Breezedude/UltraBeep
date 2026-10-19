@@ -41,6 +41,10 @@
 #define STATS_MS         60000U /* the UART counters this often */
 #define SLOW_RMC_MS      900U   /* sentences this far apart at a faster cycle: the module fell back to 1 Hz */
 #define SLOW_RMC_RUN     3U     /* ... this many times in a row */
+/* The module restarting itself (or going silent) this often at 5 Hz in one power-on: 1 Hz from then on. The v3
+ * (board UltraBip_v1.0) restarted every ~50 s at 5 Hz in flight once warm, and ran 38 min clean at 1 Hz; the v4
+ * (v1.1) never restarted at 5 Hz. One restart can be chance, the second is a pattern. */
+#define RATE_FALLBACK_RESTARTS 2U
 
 typedef enum { CMD_START, CMD_STOP, CMD_SEND, CMD_BOOT_PROBE } cmd_type_t;
 
@@ -87,6 +91,8 @@ static uint32_t stats_tick;
 static uint32_t last_rmc_tick, slow_rmc_ms;
 static uint8_t slow_rmc_run;
 static uint32_t restarts;       /* restarts by the silence watchdog since power on */
+static uint8_t fast_failures;   /* restarts and silences of the module at the fast cycle since power on */
+static volatile bool rate_fallback_new; /* it ran into RATE_FALLBACK_RESTARTS: 1 Hz now, gps_take_rate_fallback tells */
 static uint32_t last_position_save;
 static uint32_t power_off_tick;
 static bool was_powered;
@@ -752,8 +758,10 @@ static void select_cycle(void)
   char args[16];
   uint16_t want = want_cycle_ms;
   snprintf(args, sizeof(args), "1 %u 0", want);
-  if (want != 1000U && command("GSOP", args, "[GSOP] Done")) {
-    st.cycle_ms = want; /* otherwise the module's default: 1 Hz */
+  /* 1 Hz is the module's default, but one still running at 5 Hz (set up again after a silence, or falling back
+   * to 1 Hz) has to be told; refused, it keeps the default after a start */
+  if (command("GSOP", args, "[GSOP] Done") || want == 1000U) {
+    st.cycle_ms = want;
   }
   log_printf("GPS: %u fixes per second", 1000U / st.cycle_ms);
 }
@@ -1199,6 +1207,25 @@ static void quiet_report(void)
   }
 }
 
+/*
+ * The module failed at the fast cycle - it restarted itself, or went silent. After RATE_FALLBACK_RESTARTS of these
+ * in one power-on it runs at 1 Hz (where it has run cleanly on every device so far): the setup that follows uses
+ * that rate, and system.c stores the info flag so the next power-on starts at 1 Hz.
+ */
+static void fast_cycle_failed(void)
+{
+  if (st.cycle_ms >= 1000U || want_cycle_ms >= 1000U) {
+    return;
+  }
+  if (++fast_failures < RATE_FALLBACK_RESTARTS) {
+    return;
+  }
+  want_cycle_ms = 1000U;
+  rate_fallback_new = true;
+  rawlog_event("gps unstable at %u ms: %u restarts since power on, 1 Hz from now on", st.cycle_ms, fast_failures);
+  log_printf("GPS: the module failed %u times at %u fixes per second - 1 Hz from now on", fast_failures, 1000U / st.cycle_ms);
+}
+
 /* The UART counters once a minute: the baseline the quiet reports compare with. */
 static void stats_report(void)
 {
@@ -1247,6 +1274,7 @@ static void gps_task(void *arg)
       log_printf("GPS: sentences every %lu ms instead of %u ms - the module restarted itself, setting it up again",
                  (unsigned long)slow_rmc_ms, st.cycle_ms);
       slow_rmc_run = 0;
+      fast_cycle_failed();
       bool ok = resume_in_place();
       rawlog_event("gps %s without a power cycle", ok ? "set up again" : "could not be set up");
     }
@@ -1258,6 +1286,7 @@ static void gps_task(void *arg)
       log_printf("GPS: no sentences for %lu s - probing the module", (unsigned long)(limit / 1000U));
       rawlog_event("gps silent for %lu s: probing", (unsigned long)(limit / 1000U));
       restarts++;
+      fast_cycle_failed();
       if (!probe_and_resume()) {
         log_printf("GPS: restarting the module (power cycle)");
         rawlog_event("gps power cycle");
@@ -1295,6 +1324,13 @@ void gps_stop(void)
 void gps_set_rate(unsigned hz)
 {
   want_cycle_ms = hz >= 5U ? 200U : 1000U;
+}
+
+bool gps_take_rate_fallback(void)
+{
+  bool fell = rate_fallback_new;
+  rate_fallback_new = false;
+  return fell;
 }
 
 void gps_set_systems(uint8_t systems)
