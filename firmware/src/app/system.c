@@ -712,6 +712,9 @@ static void log_device_settings(void)
            bool_text(c->landing_detect), c->landing_time_s, bool_text(c->landing_impact), c->landing_impact_g,
            c->landing_slow_kmh, c->landing_impact_s, bool_text(c->landing_handling));
   rawlog_settings(s);
+  snprintf(s, SETTINGS_TEXT, "landing flight_landingautooff_bool=%s flight_landingautooffask_bool=%s",
+           bool_text(c->landing_auto_off), bool_text(c->landing_auto_off_ask));
+  rawlog_settings(s);
 }
 
 static void log_profile_settings(void)
@@ -1554,6 +1557,79 @@ static uint32_t utc_ago(uint32_t ago_s)
   return now > ago_s ? now - ago_s : 0U;
 }
 
+/*
+ * Off after the landing (flight_landingautooff_bool): AUTO_OFF_LANDED_MS after the landing the device switches
+ * off the usual way - the summary, the track closed, the Bluetooth window for the download. With
+ * flight_landingautooffask_bool it first plays the prompt tones and says "press the button to keep it on" (the
+ * extension clip press_to_keep_on); a short press within KEEP_ON_WAIT_MS after that keeps it on at the ground
+ * level and the track goes on. A takeoff meanwhile (a top landing and away again) drops it.
+ */
+#define AUTO_OFF_LANDED_MS 30000U
+#define KEEP_ON_WAIT_MS    10000U
+typedef enum { LANDED_NONE, LANDED_WAIT, LANDED_ASKING, LANDED_ASKED } landed_off_t;
+static landed_off_t landed_off;
+static uint32_t landed_tick; /* the landing, then the end of the question */
+
+static bool keep_on_window(void)
+{
+  return landed_off == LANDED_ASKING || landed_off == LANDED_ASKED;
+}
+
+static void keep_on_after_landing(void)
+{
+  landed_off = LANDED_NONE;
+  sound_stop();
+  sound_melody(MELODY_CONFIRM, ground_piezo());
+  log_printf("Auto off after the landing: kept on by the button");
+  rawlog_event("auto off after landing: kept on");
+}
+
+static void check_landing_off(void)
+{
+  if (landed_off == LANDED_NONE) {
+    return;
+  }
+  if (in_flight || !config_get()->landing_auto_off) {
+    landed_off = LANDED_NONE;
+    return;
+  }
+  uint32_t now = HAL_GetTick();
+  switch (landed_off) {
+  case LANDED_WAIT:
+    if (now - landed_tick < AUTO_OFF_LANDED_MS || sound_busy()) {
+      return;
+    }
+    if (config_get()->landing_auto_off_ask) {
+      sound_melody(MELODY_PROMPT, ground_piezo());
+      sound_say1("press_to_keep_on", ground_voice());
+      landed_off = LANDED_ASKING;
+      log_printf("Auto off after the landing: a short press keeps the device on");
+      rawlog_event("auto off after landing: asking");
+      return;
+    }
+    break;
+  case LANDED_ASKING:
+    if (!sound_busy()) {
+      landed_off = LANDED_ASKED; /* the wait counts from the end of the question */
+      landed_tick = now;
+    }
+    return;
+  case LANDED_ASKED:
+    if (now - landed_tick < KEEP_ON_WAIT_MS) {
+      return;
+    }
+    break;
+  default:
+    return;
+  }
+  landed_off = LANDED_NONE;
+  log_printf("Auto off after the landing");
+  rawlog_event("auto off after landing");
+  sound_stop();
+  sound_melody(MELODY_POWER_OFF, system_piezo());
+  shutdown();
+}
+
 static void on_landing(uint32_t utc)
 {
   log_printf("Landing detected (%02lu:%02lu:%02lu UTC)", (unsigned long)(utc / 3600U % 24U),
@@ -1564,6 +1640,10 @@ static void on_landing(uint32_t utc)
     recorder_landing(utc); /* the IGC marker; without a known time none */
   }
   sound_say1("landing", ground_voice());
+  if (config_get()->landing_auto_off) {
+    landed_off = LANDED_WAIT;
+    landed_tick = HAL_GetTick();
+  }
 }
 
 /* No epoch from the GNSS module for a while (silent or off): in flight the landing detection still runs
@@ -1930,6 +2010,8 @@ static void handle(const event_t *ev)
     } else if (b && b->type == BUTTON_UP && b->ms < SHORT_PRESS_MAX_MS && !fresh_press_needed && biplink_auth_pending()) {
       biplink_auth_confirm();
       say_pairing_confirmed();
+    } else if (b && b->type == BUTTON_UP && b->ms < SHORT_PRESS_MAX_MS && !fresh_press_needed && keep_on_window()) {
+      keep_on_after_landing(); /* "press the button to keep it on" after the landing */
     } else if (b && b->type == BUTTON_UP && b->ms < SHORT_PRESS_MAX_MS && !fresh_press_needed && !in_flight) {
       /* Two short presses on the ground: the takeoff by hand, for launches the detector misses (a walk
        * off a slope). Only with a 3D fix, because the recording needs positions. */
@@ -1959,6 +2041,9 @@ static void handle(const event_t *ev)
     check_audio_adapter();
     check_config_update();
     check_test_announce();
+    if (state == ST_ON) {
+      check_landing_off();
+    }
     if (state == ST_ON) {
       check_auto_off(b);
     }

@@ -71,6 +71,7 @@ void config_defaults(config_t *c)
   c->landing_slow_kmh = 10;
   c->landing_impact_s = 10;
   c->landing_handling = true;
+  c->landing_auto_off_ask = true; /* the auto off itself is off by default */
   c->takeoff_speed_kmh = 15;
   c->takeoff_speed_s = 5;
   c->takeoff_distance_m = 50;
@@ -431,6 +432,10 @@ static bool on_key(void *ctx, const char *section, const char *key, const char *
       c->landing_impact_s = (uint8_t)(v < 3 ? 3 : v > 60 ? 60 : v);
     } else if (strcmp(key, "flight_landinghandling_bool") == 0) {
       c->landing_handling = ini_parse_bool(value);
+    } else if (strcmp(key, "flight_landingautooff_bool") == 0) {
+      c->landing_auto_off = ini_parse_bool(value);
+    } else if (strcmp(key, "flight_landingautooffask_bool") == 0) {
+      c->landing_auto_off_ask = ini_parse_bool(value);
     } else if (strcmp(key, "flight_takeoffspeed_int") == 0) {
       int v = atoi(value);
       c->takeoff_speed_kmh = (uint8_t)(v < 5 ? 5 : v > 50 ? 50 : v);

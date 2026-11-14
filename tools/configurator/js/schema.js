@@ -607,6 +607,16 @@ const RECORDING_FIELDS = [
     level: "expert", requires: "flight_landingdetect_bool",
     help: "Rules 2 and 3: the ground speed must stay below this (walking is 3-6 km/h). Without a GPS fix only " +
       "the barometer counts." },
+  { key: "flight_landingautooff_bool", label: "Switch off after the landing", type: "bool", def: "false",
+    requires: "flight_landingdetect_bool",
+    help: "30 s after the landing the device switches off as if you held the button: the flight summary, the " +
+      "track closed, then Bluetooth stays on for the download. A takeoff in those 30 s (a top landing and away " +
+      "again) cancels it. Firmware 0.60." },
+  { key: "flight_landingautooffask_bool", label: "Ask before: press to keep it on", type: "bool", def: "true",
+    requires: "flight_landingautooff_bool",
+    help: "Before switching off the device plays two rising tones and says \"press the button to keep it on\" (the " +
+      "extension clip press_to_keep_on, Voice view); a short press within 10 s keeps it on at the ground level and " +
+      "the track goes on. Off: it switches off without asking." },
   { key: "system_uartconsole_bool", label: "Serial console on the debug pins", type: "bool", def: "false", level: "dev",
     help: "The debug console also on LPUART1 (PC0 RX, PC1 TX, 1,000,000 baud 8N1, " +
       "3.3 V), next to the one over USB. Needs a USB-serial adapter on the test pads inside the case." },

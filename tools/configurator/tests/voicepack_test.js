@@ -43,13 +43,15 @@ const bank = de.filter((c) => c.name.startsWith("bank/"));
 const glide = de.filter((c) => c.name.startsWith("glide/"));
 const from = de.filter((c) => c.name.startsWith("nav/from_"));
 const sink = de.filter((c) => /^vario_sink_\d+$/.test(c.name));
-check(VOICEPACK_EXTENSION.size === 11 && de.filter((c) => !c.stock).length === 11 + 101 + 37 + 117 + 8 &&
-  de.filter((c) => c.stock).length === de.length - 274 && [...series, ...bank, ...glide, ...from].every((c) => !c.stock) &&
+check(VOICEPACK_EXTENSION.size === 12 && de.filter((c) => !c.stock).length === 12 + 101 + 37 + 117 + 8 &&
+  de.filter((c) => c.stock).length === de.length - 275 && [...series, ...bank, ...glide, ...from].every((c) => !c.stock) &&
   voicepackExtension("g/g_23") && voicepackExtension("bank/bank_60") && voicepackExtension("glide/glide_87") && voicepackExtension("nav/from_w") &&
   !voicepackExtension("al/al_1230") && !voicepackExtension("gps_ok") && !voicepackExtension("nav/w") && !voicepackExtension("nav/wind") &&
   voicepackExtension("bank_angle") && voicepackExtension("wind") && voicepackExtension("height_gain") &&
   Object.keys(VOICEPACK_LANGUAGES).every((l) => [...VOICEPACK_EXTENSION].every((n) => voicepackText(l, n))),
-"the 11 extension words, the 101 load factor, 37 bank angle, 117 glide ratio and 8 wind direction clips are flagged and have texts in every language");
+"the 12 extension words, the 101 load factor, 37 bank angle, 117 glide ratio and 8 wind direction clips are flagged and have texts in every language");
+check(voicepackText("de", "press_to_keep_on") === "Zum Anlassen Taste drücken" && voicepackText("br", "press_to_keep_on") === "Pressione o botão para mantê-lo ligado" &&
+  voicepackText("us", "press_to_keep_on") === "Press the button to keep it on", "the question after the landing (firmware 0.60) in every language");
 check(glide.length === 117 && voicepackGlideSteps().length === 117 && glide[0].name === "glide/glide_0" && glide[116].name === "glide/glide_300" &&
   voicepackText("de", "glide/glide_87") === "8.7" && voicepackText("de", "glide/glide_50") === "5" && voicepackText("fr", "glide/glide_135") === "13.5" &&
   voicepackText("en", "glide/glide_300") === "30" && !voicepackText("en", "glide/glide_132") && !voicepackText("en", "glide/glide_225") &&

@@ -44,6 +44,8 @@ The firmware keeps every line it does not know when it rewrites `config_ext.ultr
 | `flight_landingimpacttime_int` | 10 | Seconds of calm after the shock (3–60). |
 | `flight_landinghandling_bool` | `true` | Landing from ground handling: within 30 s three seconds with a rotation over 250 °/s while the load drops below 0.5 g, and 20 s slow without steady climb or sink. |
 | `flight_landingspeed_int` | 10 | Ground speed limit of the impact and handling rules in km/h (3–30). |
+| `flight_landingautooff_bool` | `false` | 30 s after a detected landing the device switches off the usual way: the flight summary, the track closed, the Bluetooth window for the download (0.60). A takeoff within the 30 s cancels it. |
+| `flight_landingautooffask_bool` | `true` | With the above: first two rising tones and "press the button to keep it on" (extension clip `press_to_keep_on`); a short press within 10 s after it keeps the device on at the ground level and the track goes on. `false`: off without asking. |
 | `flight_takeoffspeed_int` | 15 | Takeoff by speed: GNSS ground speed in km/h (5–50) on good fixes, held for `flight_takeoffspeedtime_int` seconds (1–30, default 5). Any one of the takeoff rules starts the flight, with a GPS fix (firmware/inc/flight.h). Configurator: Recording, expert view. |
 | `flight_takeoffspeedtime_int` | 5 | See above. |
 | `flight_takeoffdistance_int` | 50 | Takeoff from the launch point: distance in m (10–500) from the averaged standing position after switching on (good fixes, below 2 km/h; standing again moves it along). The way out must be backed by the GNSS ground speed and the fixes must be good (HDOP ≤ 3), so GPS jumps and a wandering position never count. Before the first takeoff only: after a landing speed and altitude decide. |
@@ -164,7 +166,8 @@ Other values round to the nearest step (30 → 40, 10 → 20).
     can be packed later without a firmware change, and a clip the main pack lacks can be added as a file.
   * **Extension clips** - the clips UltraBeep says that the manufacturer's packs do not have (the
     configurator's Voice view lists them in their own table and generates and sends them as a group): `ready` and
-    `wait_for_takeoff` (the launch readiness below), `press_button_to_confirm` (the pairing request),
+    `wait_for_takeoff` (the launch readiness below), `press_button_to_confirm` (the pairing request), `press_to_keep_on`
+    (the question before switching off after a landing, 0.60),
     `glide_ratio`, `g_load` and `bank_angle` (the announcement blocks), `thermal_exit`, the words
     `wind`, `climb`, `gain` and `height_gain` (0.58, the announcement blocks' options), the load factor
     series `g/g_0` … `g/g_100` (0.0 to 10.0 g in tenths, one clip each: "2.3 G", since 0.52), the bank

@@ -93,6 +93,8 @@ typedef struct {
   uint8_t landing_slow_kmh;            /* flight_landingspeed_int: then slower than this ... */
   uint8_t landing_impact_s;            /* flight_landingimpacttime_int: ... for this long, no constant sink */
   bool landing_handling;               /* flight_landinghandling_bool: landing from ground handling */
+  bool landing_auto_off;               /* flight_landingautooff_bool: the summary and off 30 s after a landing */
+  bool landing_auto_off_ask;           /* flight_landingautooffask_bool: ... unless a press within 10 s keeps it on */
   uint8_t takeoff_speed_kmh;           /* flight_takeoffspeed_int: takeoff indicator A, ground speed ... */
   uint8_t takeoff_speed_s;             /* flight_takeoffspeedtime_int: ... held this long */
   uint16_t takeoff_distance_m;         /* flight_takeoffdistance_int: indicator B within 30 s */

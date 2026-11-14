@@ -64,7 +64,7 @@ const VOICEPACK_LANGUAGES = {
       vario_sink_off: "Sinkton deaktiviert", vz_min: "Maximales Sinken",
       /* extension clips of UltraBeep */
       glide_ratio: "Gleitzahl", g_load: "Beschleunigung", bank_angle: "Querneigung", thermal_exit: "Thermikausstieg",
-      wind: "Wind:", climb: "Steigen:", gain: "Gewinn:", height_gain: "Höhengewinn:",
+      wind: "Wind:", climb: "Steigen:", gain: "Gewinn:", height_gain: "Höhengewinn:", press_to_keep_on: "Zum Anlassen Taste drücken",
       "nav/from_n": "aus Norden", "nav/from_ne": "aus Nordosten", "nav/from_e": "aus Osten", "nav/from_se": "aus Südosten",
       "nav/from_s": "aus Süden", "nav/from_sw": "aus Südwesten", "nav/from_w": "aus Westen", "nav/from_nw": "aus Nordwesten",
     },
@@ -116,7 +116,7 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Accelerometer", sensors_pressure: "Barometer", solar_cell: "Solar cell",
       vario_sink_off: "Sink tone disabled", vz_min: "Maximum sink",
       glide_ratio: "Glide ratio", g_load: "g-load", bank_angle: "Bank angle", thermal_exit: "Thermal exit",
-      wind: "Wind:", climb: "Climb:", gain: "Gain:", height_gain: "Height gain:",
+      wind: "Wind:", climb: "Climb:", gain: "Gain:", height_gain: "Height gain:", press_to_keep_on: "Press the button to keep it on",
       "nav/from_n": "from the north", "nav/from_ne": "from the north-east", "nav/from_e": "from the east",
       "nav/from_se": "from the south-east", "nav/from_s": "from the south", "nav/from_sw": "from the south-west",
       "nav/from_w": "from the west", "nav/from_nw": "from the north-west",
@@ -169,7 +169,7 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Accéléromètre", sensors_pressure: "Baromètre", solar_cell: "Cellule solaire",
       vario_sink_off: "Son de descente désactivé", vz_min: "Descente maximale",
       glide_ratio: "Finesse", g_load: "Facteur de charge", bank_angle: "Inclinaison", thermal_exit: "Sortie de thermique",
-      wind: "Vent :", climb: "Montée :", gain: "Gain :", height_gain: "Gain d'altitude :",
+      wind: "Vent :", climb: "Montée :", gain: "Gain :", height_gain: "Gain d'altitude :", press_to_keep_on: "Appuyez sur le bouton pour le laisser allumé",
       "nav/from_n": "du nord", "nav/from_ne": "du nord-est", "nav/from_e": "de l'est", "nav/from_se": "du sud-est",
       "nav/from_s": "du sud", "nav/from_sw": "du sud-ouest", "nav/from_w": "de l'ouest", "nav/from_nw": "du nord-ouest",
     },
@@ -221,7 +221,7 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Accelerometro", sensors_pressure: "Barometro", solar_cell: "Cella solare",
       vario_sink_off: "Suono di discesa disattivato", vz_min: "Discesa massima",
       glide_ratio: "Efficienza", g_load: "Fattore di carico", bank_angle: "Inclinazione", thermal_exit: "Uscita dalla termica",
-      wind: "Vento:", climb: "Salita:", gain: "Guadagno:", height_gain: "Guadagno di quota:",
+      wind: "Vento:", climb: "Salita:", gain: "Guadagno:", height_gain: "Guadagno di quota:", press_to_keep_on: "Premi il pulsante per lasciarlo acceso",
       "nav/from_n": "da nord", "nav/from_ne": "da nord-est", "nav/from_e": "da est", "nav/from_se": "da sud-est",
       "nav/from_s": "da sud", "nav/from_sw": "da sud-ovest", "nav/from_w": "da ovest", "nav/from_nw": "da nord-ovest",
     },
@@ -273,7 +273,7 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Acelerómetro", sensors_pressure: "Barómetro", solar_cell: "Célula solar",
       vario_sink_off: "Tono de descenso desactivado", vz_min: "Descenso máximo",
       glide_ratio: "Planeo", g_load: "Factor de carga", bank_angle: "Inclinación", thermal_exit: "Salida de la térmica",
-      wind: "Viento:", climb: "Ascenso:", gain: "Ganancia:", height_gain: "Ganancia de altura:",
+      wind: "Viento:", climb: "Ascenso:", gain: "Ganancia:", height_gain: "Ganancia de altura:", press_to_keep_on: "Pulsa el botón para mantenerlo encendido",
       "nav/from_n": "del norte", "nav/from_ne": "del noreste", "nav/from_e": "del este", "nav/from_se": "del sureste",
       "nav/from_s": "del sur", "nav/from_sw": "del suroeste", "nav/from_w": "del oeste", "nav/from_nw": "del noroeste",
     },
@@ -325,7 +325,7 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Acelerómetro", sensors_pressure: "Barómetro", solar_cell: "Célula solar",
       vario_sink_off: "Som de descida desativado", vz_min: "Descida máxima",
       glide_ratio: "Planeio", g_load: "Fator de carga", bank_angle: "Inclinação", thermal_exit: "Saída da térmica",
-      wind: "Vento:", climb: "Subida:", gain: "Ganho:", height_gain: "Ganho de altitude:",
+      wind: "Vento:", climb: "Subida:", gain: "Ganho:", height_gain: "Ganho de altitude:", press_to_keep_on: "Prima o botão para o manter ligado",
       "nav/from_n": "de norte", "nav/from_ne": "de nordeste", "nav/from_e": "de este", "nav/from_se": "de sudeste",
       "nav/from_s": "de sul", "nav/from_sw": "de sudoeste", "nav/from_w": "de oeste", "nav/from_nw": "de noroeste",
     },
@@ -377,7 +377,7 @@ const VOICEPACK_LANGUAGES = {
       sensors_imu: "Versnellingssensor", sensors_pressure: "Barometer", solar_cell: "Zonnecel",
       vario_sink_off: "Daaltoon uitgeschakeld", vz_min: "Maximaal dalen",
       glide_ratio: "Glijgetal", g_load: "G-kracht", bank_angle: "Rolhoek", thermal_exit: "Thermiek verlaten",
-      wind: "Wind:", climb: "Stijgen:", gain: "Winst:", height_gain: "Hoogtewinst:",
+      wind: "Wind:", climb: "Stijgen:", gain: "Winst:", height_gain: "Hoogtewinst:", press_to_keep_on: "Druk op de knop om hem aan te laten",
       "nav/from_n": "uit het noorden", "nav/from_ne": "uit het noordoosten", "nav/from_e": "uit het oosten",
       "nav/from_se": "uit het zuidoosten", "nav/from_s": "uit het zuiden", "nav/from_sw": "uit het zuidwesten",
       "nav/from_w": "uit het westen", "nav/from_nw": "uit het noordwesten",
@@ -392,7 +392,7 @@ function voicepackVariant(base, label, words, units = {}) {
 }
 VOICEPACK_LANGUAGES.br = voicepackVariant("pt", "Português (Brasil)", {
   "nav/e": "Leste", "nav/from_e": "de leste", bat_charging: "Bateria carregando", contact: "Por favor, contate o suporte", takeoff: "Decolagem",
-  loading_config: "Carregando a configuração", no_gps: "Procurando GPS", wait_for_takeoff: "Aguardando a decolagem", press_button_to_confirm: "Pressione o botão para confirmar",
+  loading_config: "Carregando a configuração", no_gps: "Procurando GPS", wait_for_takeoff: "Aguardando a decolagem", press_button_to_confirm: "Pressione o botão para confirmar", press_to_keep_on: "Pressione o botão para mantê-lo ligado",
   reset_hold: "Mantenha o botão pressionado para restaurar as configurações de fábrica",
   reset_wait: "Carregando as configurações de fábrica, aguarde", takeoff_off: "Detecção de decolagem desativada",
   takeoff_on: "Detecção de decolagem ativada", updating: "atualizando", bluetooth_remote_event: "Modo de controle remoto Bluetooth",
@@ -463,7 +463,7 @@ function voicepackInfo(id) {
  * west" instead of the stock's "wind direction, west, 12 km/h").
  */
 const VOICEPACK_EXTENSION = new Set(["ready", "wait_for_takeoff", "press_button_to_confirm", "glide_ratio", "g_load",
-  "bank_angle", "thermal_exit", "wind", "climb", "gain", "height_gain"]);
+  "bank_angle", "thermal_exit", "wind", "climb", "gain", "height_gain", "press_to_keep_on"]);
 const VOICEPACK_EXTENSION_PREFIXES = ["g/", "bank/", "glide/", "nav/from_"];
 const voicepackExtension = (name) => VOICEPACK_EXTENSION.has(name) || VOICEPACK_EXTENSION_PREFIXES.some((p) => name.startsWith(p));
 
