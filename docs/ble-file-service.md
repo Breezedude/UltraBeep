@@ -8,7 +8,10 @@ start or a disconnect, then every 0.8–1 s to save current; a scanner still fin
 device within a few seconds. The device takes two connections at once (0.45): the phone with the
 BipLink app or a flight app, and the configurator. While one central is connected it keeps
 advertising at the slow interval on the ground (switched on and not in flight, in the profile
-selection, in the sync window after switching off), never in flight and never with two links. Each
+selection, in the sync window after switching off), never in flight and never with two links -
+and not while that central is the BipLink app, nor in the first 10 s of a connection (0.59.1): the
+app takes every advertisement it receives while connected as "not connected" and stops its track
+sync. To use both, connect the configurator first; the app then joins as the second link. Each
 service belongs to the link that uses it; the file service and the console serve one configurator at
 a time.
 

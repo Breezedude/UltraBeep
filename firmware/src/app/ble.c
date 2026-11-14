@@ -3,7 +3,8 @@
  * of the configurator (docs/ble-file-service.md).
  *
  * Two links at once (the phone's app and the configurator): the device keeps
- * advertising while one central is connected, on the ground only. Each
+ * advertising while one central is connected, on the ground only - but not while
+ * that central is the BipLink app (advertising_reconcile). Each
  * service belongs to the link that uses it: the stock file transfer to the
  * app's, the file service and the console to the configurator's (one at a
  * time), the remote's key reports to the phone that enabled them. The file
@@ -192,6 +193,7 @@ static volatile bool tx_pool_free = true;
 #define LINKS_MAX 2
 #define NO_LINK   0xFFFFU
 #define ADV_RETRY_MS 5000U /* after advertising failed while connected */
+#define ADV_SETTLE_MS 10000U /* a new link shows first whether it is the BipLink app (advertising_reconcile) */
 typedef struct {
   uint16_t handle; /* NO_LINK: free */
   uint16_t mtu;
@@ -1252,15 +1254,35 @@ static void stop_advertising(void)
   }
 }
 
+/* The newest link's connection time (0 without one). */
+static uint32_t newest_link_tick(void)
+{
+  uint32_t newest = 0;
+  for (unsigned i = 0; i < LINKS_MAX; i++) {
+    if (links[i].handle != NO_LINK && (newest == 0 || (int32_t)(links[i].tick - newest) > 0)) {
+      newest = links[i].tick;
+    }
+  }
+  return newest;
+}
+
 /*
  * Advertising follows the links: always without one (fast for ADV_FAST_MS, then slow), with one link
  * only on the ground and at the slow interval (so the configurator finds the device next to the phone),
  * never with two. The stack stops advertising by itself when a central connects.
+ * Not while the BipLink app is connected: the app takes every advertisement it receives as "not
+ * connected" (its Device::setRssi sets the device status to 1 whatever the connection does; the stock
+ * firmware never advertises with a link) and refuses the next file transfer - the sync stopped after
+ * the first track, or before the listing. Nor in the first ADV_SETTLE_MS of a link, before it showed
+ * whether it is the app (its first request comes about 2 s after connecting). With the configurator
+ * connected first the app can still join as the second link.
  */
 static void advertising_reconcile(void)
 {
   unsigned n = link_count();
-  bool want = n == 0 || (n < LINKS_MAX && system_second_link_allowed());
+  bool app = bl_link != NO_LINK && link_by(bl_link);
+  bool settling = n > 0 && HAL_GetTick() - newest_link_tick() < ADV_SETTLE_MS;
+  bool want = n == 0 || (n < LINKS_MAX && system_second_link_allowed() && !app && !settling);
   if (!want) {
     stop_advertising();
   } else if (!advertising) {
